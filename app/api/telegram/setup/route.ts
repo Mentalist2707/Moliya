@@ -17,6 +17,20 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "TELEGRAM_BOT_TOKEN va TELEGRAM_WEBHOOK_SECRET o'rnatilmagan" }, { status: 400 });
   }
   const url = appUrl(req);
+  // ?test=2 — haqiqiy HTTP orqali /api/data va /api/me ni birinchi foydalanuvchi sessiyasi bilan chaqirish
+  if (new URL(req.url).searchParams.get("test") === "2") {
+    const { getDb } = await import("@/lib/db");
+    const { signSession, AUTH_COOKIE } = await import("@/lib/auth");
+    const db = await getDb();
+    const u = (await db.query("SELECT id FROM users ORDER BY created_at LIMIT 1")).rows[0];
+    const cookie = `${AUTH_COOKIE}=${await signSession(Number(u.id))}`;
+    const out: Record<string, unknown> = {};
+    for (const path of ["/api/data", "/api/me", "/"]) {
+      const r = await fetch(url + path, { headers: { cookie }, redirect: "manual" });
+      out[path] = { status: r.status, location: r.headers.get("location"), body: (await r.text()).slice(0, 300) };
+    }
+    return NextResponse.json(out);
+  }
   // ?test=1 — bazadan birinchi foydalanuvchi ma'lumotini o'qib ko'rish (diagnostika)
   if (new URL(req.url).searchParams.get("test")) {
     const t0 = Date.now();
