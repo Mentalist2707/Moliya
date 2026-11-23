@@ -86,6 +86,9 @@ export type Book = {
   title: string;
   author: string | null;
   genre: string | null;
+  learned?: string | null;
+  apply?: string | null;
+  recommend?: string | null;
   status: "reja" | "oqiyapman" | "oqidim";
   total_pages: number | null;
   current_page: number;
@@ -156,4 +159,8 @@ export type AllData = {
   zakat: Zakat | null;
   qaza_log: QazaLog[];
   tracking_since: string | null;
+  reading_days: { date: string; pages: number; minutes: number }[];
+  reading_speed: { pages: number; minutes: number };
+  quotes: Quote[];
 };
+export type Quote = { id: number; book_id: number | null; text: string; page: number | null; created_at: string };

@@ -54,6 +54,7 @@ export async function GET(req: Request) {
       { command: "namoz", description: "Bugungi namoz vaqtlari" },
       { command: "kripto", description: "Portfel: kechagidan foyda/zarar" },
       { command: "quron", description: "O'qilgan sahifalar: /quron 5" },
+      { command: "oqidim", description: "Kitobdan o'qilgan sahifalar: /oqidim 15" },
       { command: "stop", description: "Ertalabki xabarni o'chirish" },
       { command: "namoz_off", description: "Namoz eslatmalarini o'chirish" },
       { command: "digest", description: "Ertalabki xabarni yoqish" },

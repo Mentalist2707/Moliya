@@ -4,33 +4,23 @@ import { useMemo, useState } from "react";
 import type { Book } from "@/lib/types";
 import { sana } from "@/lib/format";
 import { Bar, Chips, Empty, useStore } from "./ui";
-import { BookForm, PageForm } from "./forms";
+import { BookForm } from "./forms";
+import { BookCover } from "./BookCover";
+import { PageForm, RandomPick, ReadingHub, YearCard } from "./ReadingHub";
+import { etaMinutes, hm, readingStats } from "@/lib/reading";
+import { todayStr } from "@/lib/format";
+import type { Me } from "./Settings";
 import { I } from "./icons";
 
-const COVERS = ["#1f4e79", "#7a2e3b", "#2f6b4f", "#6b4b8a", "#a0522d", "#2c5f6e", "#8a6d1f", "#3d3d5c"];
-export function coverColor(t: string) {
-  let h = 0;
-  for (const c of t) h = (h * 31 + c.charCodeAt(0)) >>> 0;
-  return COVERS[h % COVERS.length];
-}
-
-export function BookCover({ b, big }: { b: Book; big?: boolean }) {
-  return (
-    <div
-      className="cover"
-      style={{ background: coverColor(b.title), ...(big ? { width: "100%", height: "auto", aspectRatio: "2 / 3", fontSize: 13, padding: 10 } : {}) }}
-      aria-hidden="true"
-    >
-      {b.title.slice(0, 50)}
-    </div>
-  );
-}
+export { BookCover, coverColor } from "./BookCover";
 
 type F = "kutubxona" | "oqiyapman" | "reja";
 const LABEL: Record<F, string> = { kutubxona: "Kutubxonam", oqiyapman: "O'qiyapman", reja: "O'qimoqchiman" };
 
-export default function Books() {
+export default function Books({ me, setMe }: { me: Me | null; setMe: (m: Me) => void }) {
   const { d } = useStore();
+  const [rnd, setRnd] = useState(false);
+  const pph = useMemo(() => readingStats(d, todayStr()).pph, [d]);
   const [f, setF] = useState<F>(d.books.some((b) => b.status === "oqiyapman") ? "oqiyapman" : "kutubxona");
   const [open, setOpen] = useState<Book | "new" | null>(null);
   const [page, setPage] = useState<Book | null>(null);
@@ -69,6 +59,7 @@ export default function Books() {
           </p>
         </div>
       </div>
+      <ReadingHub me={me} setMe={setMe} />
       <Chips value={f} onChange={setF} options={(["oqiyapman", "reja", "kutubxona"] as F[]).map((s) => ({ v: s, t: `${LABEL[s]} · ${count(s)}` }))} />
 
       {f === "kutubxona" ? (
@@ -78,6 +69,7 @@ export default function Books() {
           </div>
         ) : (
           <>
+            <YearCard />
             {read.length > 4 && (
               <input className="search" type="search" placeholder="Kitob yoki muallif…" aria-label="Kutubxonadan qidirish" value={q} onChange={(e) => setQ(e.target.value)} />
             )}
@@ -118,7 +110,14 @@ export default function Books() {
             )}
           </>
         )
-      ) : list.length === 0 ? (
+      ) : (
+        <>
+        {f === "reja" && list.length > 1 && (
+          <button className="btn soft block" onClick={() => setRnd(true)}>
+            🎲 Keyin nima o&apos;qiy?
+          </button>
+        )}
+        {list.length === 0 ? (
         <div className="card">
           <Empty
             emoji="📖"
@@ -148,6 +147,7 @@ export default function Books() {
                           {b.total_pages ? ` / ${b.total_pages} bet · ${Math.round(pct)}%` : " bet"}
                         </span>
                         {b.started && <span>{sana(b.started)} dan</span>}
+                        {etaMinutes(b, pph) !== null && <span>≈ {hm(etaMinutes(b, pph)!)} qoldi</span>}
                       </div>
                     </>
                   )}
@@ -169,11 +169,14 @@ export default function Books() {
           })}
         </div>
       )}
+        </>
+      )}
       <button className="fab" aria-label="Kitob qo'shish" onClick={() => setOpen("new")} style={{ background: "var(--books)" }}>
         <I.plus />
       </button>
       {open && <BookForm initial={open === "new" ? undefined : open} defaultStatus={f === "kutubxona" ? "oqidim" : f} onClose={() => setOpen(null)} />}
       {page && <PageForm book={page} onClose={() => setPage(null)} />}
+      {rnd && <RandomPick onClose={() => setRnd(false)} />}
     </>
   );
 }

@@ -67,6 +67,9 @@ const EMPTY: AllData = {
   zakat: null,
   qaza_log: [],
   tracking_since: null,
+  reading_days: [],
+  reading_speed: { pages: 0, minutes: 0 },
+  quotes: [],
 };
 
 export default function Home() {
@@ -216,7 +219,7 @@ export default function Home() {
             {data && tab === "moliya" && <Finance sub={fin} setSub={(s) => go("moliya", s)} />}
             {data && tab === "namoz" && <Namoz openSettings={() => setSettings(true)} quranGoal={me?.quran_goal ?? 0} />}
             {data && tab === "eslatmalar" && <Notes />}
-            {data && tab === "kitoblar" && <Books />}
+            {data && tab === "kitoblar" && <Books me={me} setMe={setMe} />}
           </div>
         </main>
 

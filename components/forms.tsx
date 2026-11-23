@@ -497,6 +497,9 @@ export function BookForm({ initial, onClose, defaultStatus }: Base & { initial?:
   const [current, setCurrent] = useState(initial ? String(initial.current_page) : "");
   const [rating, setRating] = useState(initial?.rating ?? 0);
   const [note, setNote] = useState(initial?.note ?? "");
+  const [learned, setLearned] = useState(initial?.learned ?? "");
+  const [apply, setApply] = useState(initial?.apply ?? "");
+  const [recommend, setRecommend] = useState(initial?.recommend ?? "");
   const save = useSave("books", initial?.id, onClose, "Kitob saqlandi");
   const del = useDelete("books", initial?.id, onClose);
   const { busy, err, run } = useSubmit(save);
@@ -510,7 +513,7 @@ export function BookForm({ initial, onClose, defaultStatus }: Base & { initial?:
           const t = Number(total) || null;
           let cur = Number(current) || 0;
           if (status === "oqidim" && t) cur = t;
-          const b: Record<string, unknown> = { title: title.trim(), author, genre: genre.trim() || null, status, total_pages: t, current_page: cur, rating: rating || null, note };
+          const b: Record<string, unknown> = { title: title.trim(), author, genre: genre.trim() || null, status, total_pages: t, current_page: cur, rating: rating || null, note, learned, apply, recommend };
           if (status === "oqiyapman" && !initial?.started) b.started = todayStr();
           if (status === "oqidim") b.finished = finished || null;
           else b.finished = null;
@@ -568,7 +571,20 @@ export function BookForm({ initial, onClose, defaultStatus }: Base & { initial?:
             ))}
           </div>
         </Field>
-        <Field label="Fikrlar, iqtiboslar" htmlFor="b-note">
+        {status === "oqidim" && (
+          <>
+            <Field label="Nima o'rgandim?" htmlFor="b-l">
+              <textarea id="b-l" value={learned} onChange={(e) => setLearned(e.target.value)} />
+            </Field>
+            <Field label="Qaysi g'oyani tatbiq qilaman?" htmlFor="b-a">
+              <textarea id="b-a" value={apply} onChange={(e) => setApply(e.target.value)} />
+            </Field>
+            <Field label="Kimga tavsiya qilaman?" htmlFor="b-r">
+              <input id="b-r" value={recommend} onChange={(e) => setRecommend(e.target.value)} />
+            </Field>
+          </>
+        )}
+        <Field label="Fikrlar" htmlFor="b-note">
           <textarea id="b-note" value={note} onChange={(e) => setNote(e.target.value)} />
         </Field>
         {err && <p className="err">{err}</p>}
@@ -579,47 +595,4 @@ export function BookForm({ initial, onClose, defaultStatus }: Base & { initial?:
   );
 }
 
-export function PageForm({ book, onClose }: Base & { book: Book }) {
-  const { act } = useStore();
-  const [page, setPage] = useState(String(book.current_page || ""));
-  const { busy, err, run } = useSubmit(async (b) => {
-    await act(() => api(`/api/books/${book.id}`, "PATCH", b), "Yangilandi");
-    onClose();
-  });
-  return (
-    <Sheet title={book.title} onClose={onClose}>
-      <form
-        className="form"
-        onSubmit={(e) => {
-          e.preventDefault();
-          let p = Number(page) || 0;
-          const b: Record<string, unknown> = {};
-          if (book.total_pages) p = Math.min(p, book.total_pages);
-          b.current_page = p;
-          if (book.status === "reja") {
-            b.status = "oqiyapman";
-            b.started = todayStr();
-          }
-          if (book.total_pages && p >= book.total_pages) {
-            b.status = "oqidim";
-            b.finished = todayStr();
-          }
-          run(b);
-        }}
-      >
-        <Field label="Qaysi betdasiz?" htmlFor="pg" hint={book.total_pages ? `Jami ${book.total_pages} bet` : undefined}>
-          <input id="pg" className="huge" inputMode="numeric" data-autofocus value={page} onChange={(e) => setPage(e.target.value.replace(/\D/g, ""))} />
-        </Field>
-        <div className="chips">
-          {[10, 20, 50].map((n) => (
-            <button key={n} type="button" onClick={() => setPage(String((Number(page) || 0) + n))}>
-              +{n} bet
-            </button>
-          ))}
-        </div>
-        {err && <p className="err">{err}</p>}
-        <Foot onClose={onClose} busy={busy} />
-      </form>
-    </Sheet>
-  );
-}
+export { PageForm } from "./ReadingHub";

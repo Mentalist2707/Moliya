@@ -306,12 +306,47 @@ const MIGRATE_V5 = `
   CREATE INDEX IF NOT EXISTS idx_qaza_log_user ON qaza_log(user_id, date);
 `;
 
+// 6-bosqich: kitob o'qishni qiziqarli qilish
+const MIGRATE_V6 = `
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS read_goal SMALLINT NOT NULL DEFAULT 0;        -- kunlik sahifa
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS read_year_goal SMALLINT NOT NULL DEFAULT 0;   -- yillik kitob
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS read_remind SMALLINT NOT NULL DEFAULT 1;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS read_remind_time TEXT NOT NULL DEFAULT '21:00';
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS quote_morning SMALLINT NOT NULL DEFAULT 1;
+  ALTER TABLE books ADD COLUMN IF NOT EXISTS learned TEXT;
+  ALTER TABLE books ADD COLUMN IF NOT EXISTS apply TEXT;
+  ALTER TABLE books ADD COLUMN IF NOT EXISTS recommend TEXT;
+
+  -- Har bir o'qish (sessiya yoki sahifa yangilash)
+  CREATE TABLE IF NOT EXISTS reading_log (
+    id SERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL,
+    book_id INTEGER,
+    date DATE NOT NULL,
+    pages INTEGER NOT NULL DEFAULT 0,
+    minutes INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  );
+  CREATE INDEX IF NOT EXISTS idx_reading_user ON reading_log(user_id, date);
+
+  CREATE TABLE IF NOT EXISTS quotes (
+    id SERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL,
+    book_id INTEGER,
+    text TEXT NOT NULL,
+    page INTEGER,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  );
+  CREATE INDEX IF NOT EXISTS idx_quotes_user ON quotes(user_id);
+`;
+
 async function migrate(p: Pool) {
   await p.query(SCHEMA);
   await p.query(MIGRATE);
   await p.query(MIGRATE_V3);
   await p.query(MIGRATE_V4);
   await p.query(MIGRATE_V5);
+  await p.query(MIGRATE_V6);
   // Avvalgi (bir kishilik) versiyadagi ma'lumotlarni egasiga biriktirish
   const owner = Number(process.env.TELEGRAM_OWNER_ID || 0);
   if (owner) {

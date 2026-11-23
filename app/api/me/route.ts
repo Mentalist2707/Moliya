@@ -25,6 +25,11 @@ export const GET = withUser(async (_req, uid) => {
     fast_remind: u?.fast_remind ?? 1,
     sahar_offset: u?.sahar_offset ?? 30,
     quran_goal: u?.quran_goal ?? 0,
+    read_goal: u?.read_goal ?? 0,
+    read_year_goal: u?.read_year_goal ?? 0,
+    read_remind: u?.read_remind ?? 1,
+    read_remind_time: u?.read_remind_time ?? "21:00",
+    quote_morning: u?.quote_morning ?? 1,
     local: !authEnabled(),
   });
 });

@@ -2,7 +2,7 @@ import { getDb } from "./db";
 import { buildDigest } from "./digest";
 import { getPrices, portfolio, type HoldingRow } from "./market";
 import { getDayTimes, PRAYER_NAMES, toMin, type PrayerKey } from "./prayer";
-import { setDigest, type User } from "./repo";
+import { readingStreak, setDigest, type User } from "./repo";
 import { esc, som, tg } from "./telegram";
 import { billStatus, hijri, isRamadan, nextBirthday } from "./calendar";
 
@@ -41,8 +41,8 @@ async function loadPlan(date: string): Promise<Plan> {
   const users = (
     await db.query(
       `SELECT id, first_name, daily_digest, morning_time, crypto_report, region, prayer_remind, prayer_offset, prayer_list,
-              qaza_remind, qaza_goal, fast_remind, sahar_offset, quran_goal
-       FROM users WHERE daily_digest=1 OR prayer_remind=1 OR fast_remind=1`
+              qaza_remind, qaza_goal, fast_remind, sahar_offset, quran_goal, read_goal, read_remind, read_remind_time, quote_morning
+       FROM users WHERE daily_digest=1 OR prayer_remind=1 OR fast_remind=1 OR read_remind=1`
     )
   ).rows as User[];
   // Ro'za: Ramazonda — "qoldi" belgilamaganlar; boshqa kunlari — "niyat" qilganlar
@@ -67,10 +67,10 @@ export function invalidatePlan() {
   PLAN = null;
 }
 
-type Due = { morning: User[]; prayers: { u: User; p: PrayerKey; at: number }[]; fasts: { u: User; kind: "sahar" | "iftor" }[] };
+type Due = { morning: User[]; prayers: { u: User; p: PrayerKey; at: number }[]; fasts: { u: User; kind: "sahar" | "iftor" }[]; reads: User[] };
 
 function dueAt(plan: Plan, min: number, morningTolerance: number): Due {
-  const due: Due = { morning: [], prayers: [], fasts: [] };
+  const due: Due = { morning: [], prayers: [], fasts: [], reads: [] };
   for (const u of plan.users) {
     if (u.daily_digest) {
       const mt = toMin(u.morning_time || "08:30");
@@ -84,6 +84,10 @@ function dueAt(plan: Plan, min: number, morningTolerance: number): Due {
         const at = toMin(t[p]) - (u.prayer_offset || 0);
         if (min >= at && min <= at + 5) due.prayers.push({ u, p, at });
       }
+    }
+    if (u.read_remind) {
+      const rt = toMin(u.read_remind_time || "21:00");
+      if (min >= rt && min <= rt + 5) due.reads.push(u);
     }
     if (plan.fasting.has(Number(u.id))) {
       const t = plan.times.get(u.region);
@@ -212,6 +216,25 @@ async function extrasSection(u: User, date: string): Promise<string | null> {
     L.push(h.month === 9 ? `<b>🌙 Ramazonning ${h.day}-kuni</b>` : "<b>🌙 Bugun ro'za niyatingiz bor</b>");
   }
 
+  // Kitob: streak, maqsad, tasodifiy iqtibos
+  const rs = await readingStreak(uid, date);
+  if (rs.streak > 0 || u.read_goal) {
+    if (L.length) L.push("");
+    L.push(`<b>📚 Kitob</b>: ${rs.streak ? `🔥 ${rs.streak} kunlik streak` : "streak boshlang"}${u.read_goal ? ` · bugungi maqsad ${u.read_goal} sahifa` : ""}`);
+  }
+  if (u.quote_morning) {
+    const qt = (
+      await db.query(
+        "SELECT q.text, b.title, b.author FROM quotes q LEFT JOIN books b ON b.id=q.book_id AND b.user_id=q.user_id WHERE q.user_id=$1 ORDER BY random() LIMIT 1",
+        [uid]
+      )
+    ).rows[0];
+    if (qt) {
+      if (L.length) L.push("");
+      L.push(`💬 <i>«${esc(String(qt.text).slice(0, 400))}»</i>${qt.title ? `\n— ${esc(qt.title)}${qt.author ? ", " + esc(qt.author) : ""}` : ""}`);
+    }
+  }
+
   if (u.quran_goal) {
     if (L.length) L.push("");
     const page = Number(quran?.page || 0);
@@ -269,7 +292,7 @@ export async function tick(appUrl: string, opts: { now?: number; fallback?: bool
     res.planLoaded = true;
   }
   const due = dueAt(plan, min, opts.fallback ? 180 : 5);
-  if (!due.morning.length && !due.prayers.length && !due.fasts.length) return { ...res, skipped: !res.planLoaded };
+  if (!due.morning.length && !due.prayers.length && !due.fasts.length && !due.reads.length) return { ...res, skipped: !res.planLoaded };
 
   const db = await getDb();
   if (opts.now !== undefined) res.preview = []; // lokal sinov: yuboriladigan matnlarni qaytarish
@@ -300,7 +323,29 @@ export async function tick(appUrl: string, opts: { now?: number; fallback?: bool
     if (ok) res.prayer++;
     else await release(Number(u.id), key);
   }
-  // 3) Saharlik va iftorlik
+  // 3) Kechki o'qish eslatmasi — faqat bugun hali o'qimagan va kitob o'qiyotganlarga
+  for (const u of due.reads) {
+    const key = `r:${date}`;
+    const uid = Number(u.id);
+    const reading = (await db.query("SELECT title, current_page, total_pages FROM books WHERE user_id=$1 AND status='oqiyapman' ORDER BY id DESC LIMIT 1", [uid])).rows[0];
+    if (!reading && !u.read_goal) continue;
+    const { streak, readToday } = await readingStreak(uid, date);
+    if (readToday) continue;
+    if (!(await claim(uid, key))) continue;
+    const goal = u.read_goal ? `${u.read_goal} sahifa` : "bir necha sahifa";
+    const left = reading?.total_pages ? ` (${reading.current_page}/${reading.total_pages})` : "";
+    const text =
+      (streak > 0
+        ? `🔥 <b>${streak} kunlik streak</b> uzilmasin! Bugun hali o'qimadingiz.`
+        : `📚 Bugun hali kitob o'qimadingiz.`) +
+      (reading ? `\n«${esc(reading.title)}»${left} — ${goal} bo'lsa ham o'qing.` : `\nMaqsad: ${goal}.`) +
+      `\n\nO'qib bo'lgach yozing: <code>/oqidim 10</code>`;
+    res.preview?.push({ uid, kind: "read", text });
+    const ok = await send(uid, text, { reply_markup: { inline_keyboard: [[{ text: "📖 O'qishni boshlash", web_app: { url: appUrl + "/#kitoblar" } }]] } });
+    if (!ok) await release(uid, key);
+  }
+
+  // 4) Saharlik va iftorlik
   for (const { u, kind } of due.fasts) {
     const key = `f:${date}:${kind}`;
     if (!(await claim(Number(u.id), key))) continue;

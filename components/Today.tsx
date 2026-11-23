@@ -1,5 +1,6 @@
 "use client";
 
+import { readingStats } from "@/lib/reading";
 import { useState } from "react";
 import type { Habit, Task } from "@/lib/types";
 import { daysLeft, greeting, HAFTA, muddatLabel, OYLAR, som, somShort, todayStr } from "@/lib/format";
@@ -58,6 +59,7 @@ export default function Today({ go, me, openSettings }: { go: (t: Tab, sub?: str
   const dueDebts = d.debts.filter((x) => left(x) > 0 && x.due_date && (daysLeft(x.due_date) ?? 99) <= 7);
 
   const reading = d.books.filter((b) => b.status === "oqiyapman").slice(0, 2);
+  const rs = readingStats(d, todayStr());
   const pinned = d.notes.filter((n) => n.pinned).slice(0, 2);
 
   const prayer = usePrayer(today);
@@ -319,6 +321,10 @@ export default function Today({ go, me, openSettings }: { go: (t: Tab, sub?: str
         <div className="card" style={{ "--c": "var(--books)" } as React.CSSProperties}>
           <h2>
             O&apos;qilmoqda
+            <span className="pill" style={{ marginLeft: 6 }}>
+              🔥 {rs.streak} · bugun {rs.todayPages}
+              {me?.read_goal ? `/${me.read_goal}` : ""} bet
+            </span>
             <button className="link" onClick={() => go("kitoblar")}>
               Kitoblar
             </button>

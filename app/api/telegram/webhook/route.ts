@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { addQuranPages, getUser, insert, setDigest, setFast, setPrayed, updateSettings, upsertUser } from "@/lib/repo";
+import { addPagesToCurrent, addQuranPages, getUser, readingStreak, insert, setDigest, setFast, setPrayed, updateSettings, upsertUser } from "@/lib/repo";
 import { getDayTimes, PRAYER_NAMES } from "@/lib/prayer";
 import { cryptoSection, invalidatePlan } from "@/lib/scheduler";
 import { isAllowed } from "@/lib/auth";
@@ -25,6 +25,7 @@ Buyruqlar:
 /namoz — bugungi namoz vaqtlari
 /kripto — portfel, kechagidan foyda/zarar
 /quron 5 — bugun 5 sahifa Qur'on o'qidim
+/oqidim 15 — kitobdan 15 sahifa o'qidim
 /stop, /digest — ertalabki xabarni o'chirish/yoqish
 /namoz_off, /namoz_on — namoz eslatmalari
 
@@ -126,6 +127,23 @@ export async function POST(req: Request) {
         parse_mode: "HTML",
         text: `🕌 <b>${esc(region)}</b> — ${todayIn().split("-").reverse().join(".")}\n\n${lines.join("\n")}${t.source === "hisob" ? "\n\n<i>Hisoblangan vaqt (islom.uz bilan ±2 daqiqa)</i>" : ""}\n\nEslatmalar: ${u?.prayer_remind ? "yoqilgan (/namoz_off)" : "o'chirilgan (/namoz_on)"}`,
       });
+    } else if (text.startsWith("/oqidim")) {
+      const n = parseInt(text.replace(/^\/\S+\s*/, ""), 10);
+      if (!n || n < 0) {
+        await tg("sendMessage", { chat_id: chat, text: "Nechta sahifa o'qiganingizni yozing, masalan: /oqidim 15" });
+      } else {
+        const r = await addPagesToCurrent(uid, n, todayIn());
+        const { streak } = await readingStreak(uid, todayIn());
+        const book = r.title ? `«${esc(r.title)}»${r.total ? ` — ${r.page}/${r.total}` : ` — ${r.page}-bet`}` : "Kitob tanlanmagan (ilovada «O'qiyapman»ga qo'shing)";
+        await tg("sendMessage", {
+          chat_id: chat,
+          parse_mode: "HTML",
+          text: r.finished
+            ? `🎉 <b>Kitobni tugatdingiz!</b> ${book}\nIlovada 3 ta savolga javob bering — o'qiganingiz yodda qoladi.\n🔥 Streak: ${streak} kun`
+            : `📖 +${n} sahifa. ${book}\n🔥 Streak: <b>${streak} kun</b>`,
+          reply_markup: r.finished ? openAppButton(url + "/#kitoblar", "📝 Xulosa yozish") : undefined,
+        });
+      }
     } else if (text.startsWith("/quron")) {
       const n = parseInt(text.replace(/^\/\S+\s*/, ""), 10);
       if (!n) {

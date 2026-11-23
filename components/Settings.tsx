@@ -21,6 +21,11 @@ export type Me = {
   fast_remind: number;
   sahar_offset: number;
   quran_goal: number;
+  read_goal: number;
+  read_year_goal: number;
+  read_remind: number;
+  read_remind_time: string;
+  quote_morning: number;
   local: boolean;
 };
 

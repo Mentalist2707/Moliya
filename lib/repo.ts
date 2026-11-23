@@ -11,7 +11,8 @@ export const TABLES = {
   tasks: ["title", "note", "due_date", "priority", "done"],
   habits: ["name", "kind", "emoji", "archived"],
   notes: ["title", "body", "pinned", "color"],
-  books: ["title", "author", "genre", "status", "total_pages", "current_page", "rating", "started", "finished", "note"],
+  books: ["title", "author", "genre", "status", "total_pages", "current_page", "rating", "started", "finished", "note", "learned", "apply", "recommend"],
+  quotes: ["book_id", "text", "page"],
   holdings: ["coin", "symbol", "name", "amount", "avg_price"],
   bills: ["name", "amount", "day", "category", "remind_days", "last_paid", "active", "note"],
   birthdays: ["name", "month", "day", "year", "note"],
@@ -23,7 +24,7 @@ export function isTable(t: string): t is TableName {
   return Object.prototype.hasOwnProperty.call(TABLES, t);
 }
 
-const NUM = new Set(["target", "saved", "amount", "paid", "price", "total_pages", "current_page", "rating", "avg_price", "day", "month", "year", "remind_days", "active"]);
+const NUM = new Set(["target", "saved", "amount", "paid", "price", "total_pages", "current_page", "rating", "avg_price", "day", "month", "year", "remind_days", "active", "book_id", "page"]);
 
 function pick(table: TableName, body: Record<string, unknown>) {
   const out: Record<string, unknown> = {};
@@ -51,7 +52,7 @@ function clean<T extends Record<string, unknown>>(rows: T[]): T[] {
 export async function getAll(uid: number): Promise<AllData> {
   const db = await getDb();
   const q = (sql: string) => db.query(sql, [uid]).then((r) => clean(r.rows));
-  const [goals, debts, purchases, payments, transactions, tasks, habits, habit_logs, notes, books, holdings, qaza, prayer_log, bills, budgets, birthdays, fast_log, quranRows, quran_log, zakatRows, qaza_log, since] = await Promise.all([
+  const [goals, debts, purchases, payments, transactions, tasks, habits, habit_logs, notes, books, holdings, qaza, prayer_log, bills, budgets, birthdays, fast_log, quranRows, quran_log, zakatRows, qaza_log, since, reading_days, speedRows, quotes] = await Promise.all([
     q(`SELECT * FROM goals WHERE user_id=$1 ORDER BY deadline NULLS LAST, id DESC`),
     q(`SELECT * FROM debts WHERE user_id=$1 ORDER BY due_date NULLS LAST, id DESC`),
     q(`SELECT * FROM purchases WHERE user_id=$1 ORDER BY bought, planned_date NULLS LAST, id DESC`),
@@ -74,6 +75,9 @@ export async function getAll(uid: number): Promise<AllData> {
     q(`SELECT * FROM zakat WHERE user_id=$1`),
     q(`SELECT date, prayer, delta, kind, to_char(created_at AT TIME ZONE 'Asia/Tashkent','HH24:MI') AS time FROM qaza_log WHERE user_id=$1 ORDER BY created_at DESC LIMIT 200`),
     q(`SELECT LEAST((SELECT (created_at AT TIME ZONE 'Asia/Tashkent')::date FROM users WHERE id=$1), (SELECT MIN(date) FROM prayer_log WHERE user_id=$1)) AS d`),
+    q(`SELECT date, SUM(pages)::int AS pages, SUM(minutes)::int AS minutes FROM reading_log WHERE user_id=$1 AND date >= CURRENT_DATE - 400 GROUP BY date ORDER BY date`),
+    q(`SELECT COALESCE(SUM(pages),0)::int AS pages, COALESCE(SUM(minutes),0)::int AS minutes FROM reading_log WHERE user_id=$1 AND minutes > 0 AND pages > 0 AND date >= CURRENT_DATE - 120`),
+    q(`SELECT * FROM quotes WHERE user_id=$1 ORDER BY id DESC`),
   ]);
   return {
     goals, debts, purchases, payments, transactions, tasks, habits, habit_logs, notes, books, holdings, qaza, prayer_log,
@@ -82,6 +86,9 @@ export async function getAll(uid: number): Promise<AllData> {
     zakat: zakatRows[0] ?? null,
     qaza_log,
     tracking_since: since[0]?.d ? String(since[0].d).slice(0, 10) : null,
+    reading_days,
+    reading_speed: speedRows[0] ?? { pages: 0, minutes: 0 },
+    quotes,
   } as unknown as AllData;
 }
 
@@ -194,9 +201,15 @@ export type User = {
   fast_remind: number;
   sahar_offset: number;
   quran_goal: number;
+  read_goal: number;
+  read_year_goal: number;
+  read_remind: number;
+  read_remind_time: string;
+  quote_morning: number;
 };
 
-const USER_COLS = "id, first_name, last_name, username, photo_url, daily_digest, morning_time, crypto_report, region, prayer_remind, prayer_offset, prayer_list, qaza_remind, qaza_goal, fast_remind, sahar_offset, quran_goal";
+const USER_COLS =
+  "id, first_name, last_name, username, photo_url, daily_digest, morning_time, crypto_report, region, prayer_remind, prayer_offset, prayer_list, qaza_remind, qaza_goal, fast_remind, sahar_offset, quran_goal, read_goal, read_year_goal, read_remind, read_remind_time, quote_morning";
 
 export async function upsertUser(u: { id: number; first_name?: string; last_name?: string; username?: string; photo_url?: string }) {
   const db = await getDb();
@@ -228,7 +241,7 @@ export async function setDigest(uid: number, on: boolean) {
 // Foydalanuvchining barcha ma'lumotlarini o'chirish (hisobni o'chirish)
 export async function deleteAccount(uid: number) {
   await tx(async (q) => {
-    for (const t of ["habit_logs", "payments", "goals", "debts", "purchases", "transactions", "tasks", "habits", "notes", "books", "holdings", "qaza", "prayer_log", "sent_log", "bills", "budgets", "birthdays", "fast_log", "quran", "quran_log", "zakat", "qaza_log"])
+    for (const t of ["habit_logs", "payments", "goals", "debts", "purchases", "transactions", "tasks", "habits", "notes", "books", "holdings", "qaza", "prayer_log", "sent_log", "bills", "budgets", "birthdays", "fast_log", "quran", "quran_log", "zakat", "qaza_log", "reading_log", "quotes"])
       await q(`DELETE FROM ${t} WHERE user_id=$1`, [uid]);
     await q("DELETE FROM users WHERE id=$1", [uid]);
   });
@@ -248,6 +261,11 @@ export async function updateSettings(uid: number, b: Record<string, unknown>) {
   bool("prayer_remind");
   bool("qaza_remind");
   bool("fast_remind");
+  bool("read_remind");
+  bool("quote_morning");
+  if (typeof b.read_remind_time === "string" && /^([01]\d|2[0-3]):(00|30)$/.test(b.read_remind_time)) put("read_remind_time", b.read_remind_time);
+  if (Number.isInteger(Number(b.read_goal)) && Number(b.read_goal) >= 0 && Number(b.read_goal) <= 500) put("read_goal", Number(b.read_goal));
+  if (Number.isInteger(Number(b.read_year_goal)) && Number(b.read_year_goal) >= 0 && Number(b.read_year_goal) <= 365) put("read_year_goal", Number(b.read_year_goal));
   if ([15, 30, 45, 60].includes(Number(b.sahar_offset))) put("sahar_offset", Number(b.sahar_offset));
   if (Number.isInteger(Number(b.quran_goal)) && Number(b.quran_goal) >= 0 && Number(b.quran_goal) <= 100) put("quran_goal", Number(b.quran_goal));
   if (typeof b.morning_time === "string" && /^([01]\d|2[0-3]):(00|30)$/.test(b.morning_time)) put("morning_time", b.morning_time);
@@ -430,4 +448,69 @@ export async function saveZakat(uid: number, b: Record<string, unknown>) {
       ...cols.map((c) => vals[c]),
       uid,
     ]);
+}
+
+/* ---------- Kitob o'qish ---------- */
+/**
+ * Kitobdagi yangi sahifani yozish: farqni o'qish jurnaliga qo'shadi, holatni yangilaydi.
+ * page — yangi joriy sahifa; minutes — taymer bo'yicha o'qilgan vaqt (ixtiyoriy).
+ */
+export async function logReading(uid: number, bookId: number, page: number, minutes: number, date: string) {
+  const db = await getDb();
+  const r = await db.query("SELECT id, status, total_pages, current_page, started FROM books WHERE id=$1 AND user_id=$2", [bookId, uid]);
+  const b = r.rows[0];
+  if (!b) throw new Error("Topilmadi");
+  let p = Math.max(0, Math.trunc(page));
+  if (b.total_pages) p = Math.min(p, Number(b.total_pages));
+  const delta = Math.max(0, p - Number(b.current_page || 0));
+  const finished = !!b.total_pages && p >= Number(b.total_pages) && b.status !== "oqidim";
+  const status = finished ? "oqidim" : b.status === "reja" && p > 0 ? "oqiyapman" : b.status;
+  await db.query(
+    `UPDATE books SET current_page=$1, status=$2,
+       started = COALESCE(started, CASE WHEN $2 <> 'reja' THEN $4::date END),
+       finished = CASE WHEN $3 THEN $4::date ELSE finished END
+     WHERE id=$5 AND user_id=$6`,
+    [p, status, finished, date, bookId, uid]
+  );
+  const mins = Math.max(0, Math.min(600, Math.trunc(minutes || 0)));
+  if (delta > 0 || mins > 0) {
+    await db.query("INSERT INTO reading_log (user_id, book_id, date, pages, minutes) VALUES ($1,$2,$3,$4,$5)", [uid, bookId, date, delta, mins]);
+  }
+  return { delta, finished, page: p };
+}
+
+/** Bot uchun: hozir o'qilayotgan (oxirgi yangilangan) kitobga N sahifa qo'shish */
+export async function addPagesToCurrent(uid: number, pages: number, date: string) {
+  const db = await getDb();
+  const b = (
+    await db.query(
+      `SELECT b.id, b.title, b.current_page, b.total_pages FROM books b
+        LEFT JOIN LATERAL (SELECT MAX(created_at) t FROM reading_log r WHERE r.book_id=b.id) l ON true
+        WHERE b.user_id=$1 AND b.status='oqiyapman' ORDER BY l.t DESC NULLS LAST, b.id DESC LIMIT 1`,
+      [uid]
+    )
+  ).rows[0];
+  if (!b) {
+    await db.query("INSERT INTO reading_log (user_id, book_id, date, pages) VALUES ($1,NULL,$2,$3)", [uid, date, Math.max(0, Math.trunc(pages))]);
+    return { title: null as string | null, page: null as number | null, total: null as number | null, finished: false };
+  }
+  const r = await logReading(uid, b.id, Number(b.current_page) + Math.trunc(pages), 0, date);
+  return { title: b.title as string, page: r.page, total: b.total_pages ? Number(b.total_pages) : null, finished: r.finished };
+}
+
+/** Ketma-ket o'qilgan kunlar (bugun hali o'qilmagan bo'lsa — kechadan hisoblanadi) */
+export async function readingStreak(uid: number, today: string) {
+  const db = await getDb();
+  const days = (
+    await db.query("SELECT DISTINCT date FROM reading_log WHERE user_id=$1 AND pages > 0 AND date >= $2::date - 400 ORDER BY date DESC", [uid, today])
+  ).rows.map((r) => String(r.date).slice(0, 10));
+  const set = new Set(days);
+  const addD = (d: string, n: number) => new Date(Date.parse(d + "T00:00:00Z") + n * 86400000).toISOString().slice(0, 10);
+  let d = set.has(today) ? today : addD(today, -1);
+  let n = 0;
+  while (set.has(d)) {
+    n++;
+    d = addD(d, -1);
+  }
+  return { streak: n, readToday: set.has(today) };
 }
