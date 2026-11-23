@@ -1,53 +1,46 @@
 # Moliya — shaxsiy moliya ilovasi
 
-Next.js 15 + SQLite (better-sqlite3). Barcha ma'lumotlar kompyuteringizdagi
-`data/moliya.db` faylida saqlanadi — internet yoki tashqi server kerak emas.
+Next.js 15 + PostgreSQL (Neon). Ma'lumotlar Neon bulut bazasida saqlanadi,
+jadvallar birinchi ishga tushganda avtomatik yaratiladi.
 
-## Ishga tushirish
+## 1. Neon baza olish (bepul)
 
-Kerak: **Node.js 18.18+** (tavsiya: 20 yoki 22) — https://nodejs.org
+1. https://neon.tech → ro'yxatdan o'ting → **New Project**
+   (Region: Yevropaga yaqinini tanlang, masalan Frankfurt)
+2. Dashboard → **Connect** → **Pooled connection** yoqilgan holda
+   ulanish manzilini nusxalang. U shunday ko'rinadi:
+   `postgresql://USER:PAROL@ep-xxxx-pooler.eu-central-1.aws.neon.tech/neondb?sslmode=require`
+
+## 2. Lokal ishga tushirish
+
+Kerak: **Node.js 18.18+** (tavsiya: 20 yoki 22)
 
 ```bash
+cp .env.example .env     # va ichini to'ldiring
 npm install
 npm run dev
 ```
 
-Brauzerda oching: http://localhost:3000
-
-Doimiy ishlatish uchun (tezroq):
-
-```bash
-npm run build
-npm start
-```
+Brauzerda: http://localhost:3000
 
 ## .env sozlamalari
 
-`.env.example` dan nusxa oling: `cp .env.example .env`
+| O'zgaruvchi | Nima uchun |
+|---|---|
+| `DATABASE_URL` | Neon ulanish manzili (1-qadamdan) |
+| `APP_PASSWORD` | Kirish paroli. Internetda **albatta** qo'ying |
+| `AUTH_SECRET` | Cookie uchun maxfiy kalit: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
 
-| O'zgaruvchi | Nima uchun | Misol |
-|---|---|---|
-| `APP_PASSWORD` | Kirish paroli. Internetga chiqarsangiz **albatta** qo'ying | `KuchliParol_2026` |
-| `AUTH_SECRET` | Cookie uchun maxfiy kalit (uzun tasodifiy satr) | `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
-| `DATABASE_PATH` | SQLite fayli yo'li (doimiy diskda bo'lishi kerak) | `/data/moliya.db` |
+`.env` fayli GitHub'ga yuklanmaydi (`.gitignore`da).
 
-`APP_PASSWORD` bo'sh bo'lsa, ilova parolsiz ochiladi (faqat lokal ishlatish uchun).
+## 3. Vercel'ga deploy
 
-## Deploy (Railway — tavsiya etiladi)
+1. https://vercel.com → **Add New → Project** → GitHub'dan `Moliya` repo'ni tanlang
+2. **Environment Variables** bo'limiga yuqoridagi 3 ta o'zgaruvchini kiriting
+3. **Deploy** — bir necha daqiqada `moliya-xxx.vercel.app` manzili tayyor
 
-SQLite fayl bazasi bo'lgani uchun ilovaga **doimiy disk** kerak.
-Vercel/Netlify'da fayl saqlanmaydi — u yerda ma'lumotlar yo'qolib ketadi.
-
-1. https://railway.app → New Project → Deploy from GitHub → `Moliya` repo
-2. Service → **Settings → Volumes → Add Volume**, Mount path: `/data`
-3. **Variables** bo'limiga qo'shing:
-   - `APP_PASSWORD` = o'z parolingiz
-   - `AUTH_SECRET` = tasodifiy uzun satr
-   - `DATABASE_PATH` = `/data/moliya.db`
-4. **Settings → Networking → Generate Domain** — tayyor manzil beriladi.
-
-Build/Start buyruqlarini Railway o'zi aniqlaydi (`npm run build`, `npm start`).
-Render.com yoki o'z VPS'ingizda ham xuddi shunday: doimiy disk + 3 ta o'zgaruvchi.
+Keyin har safar GitHub'ga push qilganingizda Vercel o'zi qayta deploy qiladi.
+`.env`ni o'zgartirsangiz — Vercel'da **Redeploy** bosing.
 
 ## Bo'limlar
 
@@ -59,9 +52,9 @@ Render.com yoki o'z VPS'ingizda ham xuddi shunday: doimiy disk + 3 ta o'zgaruvch
 
 ## Ma'lumotlar bazasi
 
-`data/moliya.db` — oddiy SQLite fayl. Zaxira nusxa olish uchun shu faylni
-(server o'chiq paytda) nusxalab qo'ying. Jadvallar: `goals`, `debts`,
-`purchases`, `payments`. Baza birinchi ishga tushganda o'zi yaratiladi.
+Jadvallar: `goals` (maqsadlar), `debts` (qarzlar), `purchases` (xaridlar),
+`payments` (to'lovlar tarixi). Ularni Neon → **Tables** bo'limida ham ko'rish mumkin.
+Neon'da bazani oldingi holatga qaytarish (restore) imkoniyati ham bor.
 
 ## Tuzilishi
 
@@ -69,11 +62,8 @@ Render.com yoki o'z VPS'ingizda ham xuddi shunday: doimiy disk + 3 ta o'zgaruvch
 app/page.tsx              — interfeys
 app/api/...               — REST API (GET /api/data, POST/PATCH/DELETE)
 components/Forms.tsx      — formalar va modal oynalar
-lib/db.ts                 — SQLite ulanishi va jadvallar
+lib/db.ts                 — PostgreSQL ulanishi va jadvallar
 lib/repo.ts               — baza bilan ishlash funksiyalari
 lib/auth.ts, middleware.ts — parol bilan himoya
 app/login/page.tsx        — kirish sahifasi
 ```
-
-Windows'da `npm install` xato bersa (better-sqlite3), Node.js'ning LTS
-versiyasini o'rnating va qayta urinib ko'ring.

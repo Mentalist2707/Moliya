@@ -12,7 +12,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Noto'g'ri ma'lumot" }, { status: 400 });
     }
     const date = b.date || new Date().toISOString().slice(0, 10);
-    addPayment(b.kind, Number(b.ref_id), amount, date, b.note);
+    await addPayment(b.kind, Number(b.ref_id), amount, date, b.note);
     return NextResponse.json({ ok: true }, { status: 201 });
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 400 });
@@ -23,6 +23,6 @@ export async function POST(req: Request) {
 export async function DELETE(req: Request) {
   const id = Number(new URL(req.url).searchParams.get("id"));
   if (!id) return NextResponse.json({ error: "id kerak" }, { status: 400 });
-  removePayment(id);
+  await removePayment(id);
   return NextResponse.json({ ok: true });
 }

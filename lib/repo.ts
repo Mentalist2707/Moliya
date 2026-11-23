@@ -14,6 +14,8 @@ export function isTable(t: string): t is TableName {
   return Object.prototype.hasOwnProperty.call(TABLES, t);
 }
 
+const MONEY = new Set(["target", "saved", "amount", "paid", "price"]);
+
 function pick(table: TableName, body: Record<string, unknown>) {
   const out: Record<string, unknown> = {};
   for (const col of TABLES[table]) {
@@ -21,80 +23,95 @@ function pick(table: TableName, body: Record<string, unknown>) {
       let v = body[col];
       if (v === "") v = null;
       if (typeof v === "boolean") v = v ? 1 : 0;
+      if (MONEY.has(col) && v !== null) v = Math.round(Number(v) || 0);
       out[col] = v;
     }
   }
   return out;
 }
 
-export function getAll(): AllData {
-  const db = getDb();
-  return {
-    goals: db.prepare("SELECT * FROM goals ORDER BY deadline IS NULL, deadline, id DESC").all() as AllData["goals"],
-    debts: db.prepare("SELECT * FROM debts ORDER BY due_date IS NULL, due_date, id DESC").all() as AllData["debts"],
-    purchases: db
-      .prepare("SELECT * FROM purchases ORDER BY bought, planned_date IS NULL, planned_date, id DESC")
-      .all() as AllData["purchases"],
-    payments: db.prepare("SELECT * FROM payments ORDER BY date DESC, id DESC").all() as AllData["payments"],
-  };
+export async function getAll(): Promise<AllData> {
+  const db = await getDb();
+  const [g, d, p, pay] = await Promise.all([
+    db.query(`SELECT * FROM goals ORDER BY deadline NULLS LAST, id DESC`),
+    db.query(`SELECT * FROM debts ORDER BY due_date NULLS LAST, id DESC`),
+    db.query(`SELECT * FROM purchases ORDER BY bought, planned_date NULLS LAST, id DESC`),
+    db.query(`SELECT * FROM payments ORDER BY date DESC, id DESC`),
+  ]);
+  return { goals: g.rows, debts: d.rows, purchases: p.rows, payments: pay.rows };
 }
 
-export function insert(table: TableName, body: Record<string, unknown>) {
+export async function insert(table: TableName, body: Record<string, unknown>) {
   const data = pick(table, body);
   const cols = Object.keys(data);
   if (!cols.length) throw new Error("Ma'lumot bo'sh");
-  const sql = `INSERT INTO ${table} (${cols.join(",")}) VALUES (${cols.map((c) => "@" + c).join(",")})`;
-  const info = getDb().prepare(sql).run(data);
-  return getDb().prepare(`SELECT * FROM ${table} WHERE id = ?`).get(info.lastInsertRowid);
+  const sql = `INSERT INTO ${table} (${cols.join(",")}) VALUES (${cols.map((_, i) => "$" + (i + 1)).join(",")}) RETURNING *`;
+  const db = await getDb();
+  const r = await db.query(sql, cols.map((c) => data[c]));
+  return r.rows[0];
 }
 
-export function update(table: TableName, id: number, body: Record<string, unknown>) {
+export async function update(table: TableName, id: number, body: Record<string, unknown>) {
   const data = pick(table, body);
   const cols = Object.keys(data);
+  const db = await getDb();
   if (cols.length) {
-    const sql = `UPDATE ${table} SET ${cols.map((c) => `${c}=@${c}`).join(",")} WHERE id=@__id`;
-    getDb().prepare(sql).run({ ...data, __id: id });
+    const sql = `UPDATE ${table} SET ${cols.map((c, i) => `${c}=$${i + 1}`).join(",")} WHERE id=$${cols.length + 1}`;
+    await db.query(sql, [...cols.map((c) => data[c]), id]);
   }
-  return getDb().prepare(`SELECT * FROM ${table} WHERE id = ?`).get(id);
+  const r = await db.query(`SELECT * FROM ${table} WHERE id = $1`, [id]);
+  return r.rows[0] ?? null;
 }
 
-export function remove(table: TableName, id: number) {
-  const db = getDb();
-  const tx = db.transaction(() => {
-    db.prepare(`DELETE FROM ${table} WHERE id = ?`).run(id);
-    if (table === "goals") db.prepare("DELETE FROM payments WHERE kind='goal' AND ref_id=?").run(id);
-    if (table === "debts") db.prepare("DELETE FROM payments WHERE kind='debt' AND ref_id=?").run(id);
+// Bir nechta so'rovni bitta tranzaksiyada bajarish
+async function tx(fn: (q: (sql: string, params?: unknown[]) => Promise<unknown>) => Promise<void>) {
+  const db = await getDb();
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    await fn((sql, params) => client.query(sql, params));
+    await client.query("COMMIT");
+  } catch (e) {
+    await client.query("ROLLBACK");
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
+export async function remove(table: TableName, id: number) {
+  await tx(async (q) => {
+    await q(`DELETE FROM ${table} WHERE id = $1`, [id]);
+    if (table === "goals") await q("DELETE FROM payments WHERE kind='goal' AND ref_id=$1", [id]);
+    if (table === "debts") await q("DELETE FROM payments WHERE kind='debt' AND ref_id=$1", [id]);
   });
-  tx();
 }
 
 // Maqsadga pul qo'shish yoki qarzni to'lash (qisman bo'lishi mumkin)
-export function addPayment(kind: "goal" | "debt", refId: number, amount: number, date: string, note?: string) {
-  const db = getDb();
-  const tx = db.transaction(() => {
-    db.prepare("INSERT INTO payments (kind, ref_id, amount, date, note) VALUES (?,?,?,?,?)").run(
+export async function addPayment(kind: "goal" | "debt", refId: number, amount: number, date: string, note?: string) {
+  const amt = Math.round(amount);
+  await tx(async (q) => {
+    await q("INSERT INTO payments (kind, ref_id, amount, date, note) VALUES ($1,$2,$3,$4,$5)", [
       kind,
       refId,
-      amount,
+      amt,
       date,
-      note || null
-    );
-    if (kind === "goal") db.prepare("UPDATE goals SET saved = MAX(0, saved + ?) WHERE id = ?").run(amount, refId);
-    else db.prepare("UPDATE debts SET paid = MAX(0, paid + ?) WHERE id = ?").run(amount, refId);
+      note || null,
+    ]);
+    if (kind === "goal") await q("UPDATE goals SET saved = GREATEST(0, saved + $1) WHERE id = $2", [amt, refId]);
+    else await q("UPDATE debts SET paid = GREATEST(0, paid + $1) WHERE id = $2", [amt, refId]);
   });
-  tx();
 }
 
-export function removePayment(id: number) {
-  const db = getDb();
-  const p = db.prepare("SELECT * FROM payments WHERE id = ?").get(id) as
-    | { kind: "goal" | "debt"; ref_id: number; amount: number }
-    | undefined;
-  if (!p) return;
-  const tx = db.transaction(() => {
-    if (p.kind === "goal") db.prepare("UPDATE goals SET saved = MAX(0, saved - ?) WHERE id = ?").run(p.amount, p.ref_id);
-    else db.prepare("UPDATE debts SET paid = MAX(0, paid - ?) WHERE id = ?").run(p.amount, p.ref_id);
-    db.prepare("DELETE FROM payments WHERE id = ?").run(id);
+export async function removePayment(id: number) {
+  await tx(async (q) => {
+    const r = (await q("SELECT * FROM payments WHERE id = $1 FOR UPDATE", [id])) as {
+      rows: { kind: "goal" | "debt"; ref_id: number; amount: number }[];
+    };
+    const p = r.rows[0];
+    if (!p) return;
+    if (p.kind === "goal") await q("UPDATE goals SET saved = GREATEST(0, saved - $1) WHERE id = $2", [p.amount, p.ref_id]);
+    else await q("UPDATE debts SET paid = GREATEST(0, paid - $1) WHERE id = $2", [p.amount, p.ref_id]);
+    await q("DELETE FROM payments WHERE id = $1", [id]);
   });
-  tx();
 }
