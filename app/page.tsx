@@ -54,7 +54,7 @@ export default function Home() {
 
   const reload = useCallback(async () => {
     try {
-      setData(await api<AllData>("/api/data"));
+      setData(await api<AllData>("/api/state"));
       setLoadErr("");
     } catch (e) {
       setLoadErr((e as Error).message);

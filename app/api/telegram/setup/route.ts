@@ -25,7 +25,7 @@ export async function GET(req: Request) {
     const u = (await db.query("SELECT id FROM users ORDER BY created_at LIMIT 1")).rows[0];
     const cookie = `${AUTH_COOKIE}=${await signSession(Number(u.id))}`;
     const out: Record<string, unknown> = {};
-    for (const path of ["/api/data", "/api/me", "/"]) {
+    for (const path of ["/api/state", "/api/data", "/api/me"]) {
       const r = await fetch(url + path, { headers: { cookie }, redirect: "manual" });
       out[path] = { status: r.status, location: r.headers.get("location"), body: (await r.text()).slice(0, 300) };
     }

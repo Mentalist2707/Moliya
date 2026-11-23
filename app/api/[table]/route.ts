@@ -1,10 +1,17 @@
 import { NextResponse } from "next/server";
-import { insert, isTable } from "@/lib/repo";
+import { getAll, insert, isTable } from "@/lib/repo";
 import { withUser } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
 
 type Ctx = { params: Promise<{ table: string }> };
+
+// GET /api/<table> — butun holatni qaytaradi (Vercel ba'zan statik marshrutni shu yerga yo'naltiradi)
+export const GET = withUser<Ctx>(async (_req, uid, { params }) => {
+  const { table } = await params;
+  if (table === "state" || table === "data") return NextResponse.json(await getAll(uid));
+  return NextResponse.json({ error: "Noma'lum bo'lim" }, { status: 404 });
+});
 
 export const POST = withUser<Ctx>(async (req, uid, { params }) => {
   const { table } = await params;
