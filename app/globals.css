@@ -316,3 +316,8 @@ button.kpi:hover { background: var(--surface-2); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* Orqaga tugmasi */
+.backbtn { justify-self: start; display: inline-flex; align-items: center; gap: 4px; border: 0; background: var(--surface); box-shadow: var(--shadow); color: var(--ink); font: inherit; font-weight: 700; font-size: 15px; padding: 8px 16px 8px 10px; border-radius: 99px; cursor: pointer; margin-bottom: -6px; }
+.backbtn span { font-size: 24px; line-height: 0.8; margin-top: -2px; }
+.backbtn:active { transform: scale(.97); }

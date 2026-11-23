@@ -1,5 +1,7 @@
 "use client";
 
+import { pushBack } from "@/lib/back";
+
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 import type { AllData } from "@/lib/types";
 import { parseMoney, som } from "@/lib/format";
@@ -42,6 +44,9 @@ export function useStore(): Store {
 /* ---------- Sheet (mobilda pastdan chiqadi) ---------- */
 export function Sheet({ title, onClose, children }: { title?: string; onClose: () => void; children: React.ReactNode }) {
   const ref = useRef<HTMLDivElement>(null);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+  useEffect(() => pushBack(() => closeRef.current()), []);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     document.addEventListener("keydown", onKey);

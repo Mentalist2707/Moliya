@@ -101,12 +101,8 @@ export function PrayerChecks({ date, compact }: { date: string; compact?: boolea
   );
 }
 
-export default function Ibodat({ openSettings, quranGoal }: { openSettings: () => void; quranGoal: number }) {
-  const [seg, setSeg] = useState<"namoz" | "roza" | "quron">(() => {
-    if (typeof window === "undefined") return "namoz";
-    const h = location.hash.split("-")[1];
-    return h === "roza" || h === "quron" ? h : "namoz";
-  });
+export type IbSub = "namoz" | "roza" | "quron";
+export default function Ibodat({ openSettings, quranGoal, seg, setSeg }: { openSettings: () => void; quranGoal: number; seg: IbSub; setSeg: (s: IbSub) => void }) {
   return (
     <>
       <div className="ph">
@@ -120,10 +116,7 @@ export default function Ibodat({ openSettings, quranGoal }: { openSettings: () =
       <Seg
         label="Ibodat bo'limi"
         value={seg}
-        onChange={(v) => {
-          setSeg(v);
-          history.replaceState(null, "", "#namoz" + (v === "namoz" ? "" : "-" + v));
-        }}
+        onChange={setSeg}
         options={[
           { v: "namoz", t: "Namoz" },
           { v: "roza", t: "Ro'za" },
