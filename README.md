@@ -1,69 +1,92 @@
-# Moliya — shaxsiy moliya ilovasi
+# Moliya — shaxsiy yordamchi
 
-Next.js 15 + PostgreSQL (Neon). Ma'lumotlar Neon bulut bazasida saqlanadi,
-jadvallar birinchi ishga tushganda avtomatik yaratiladi.
+Bitta ilovada: **Bugun** (bosh sahifa), **Vazifalar** (to-do + kunlik vazifalar),
+**Odatlar** (streak bilan), **Moliya** (kirim-chiqim, qarzlar, maqsadlar, xaridlar),
+**Eslatmalar** va **Kitoblar**. Telegram Mini App sifatida ishlaydi, bot har kuni
+ertalab eslatma yuboradi.
 
-## 1. Neon baza olish (bepul)
+Texnologiyalar: Next.js 15 · PostgreSQL (Neon) · Vercel.
 
-1. https://neon.tech → ro'yxatdan o'ting → **New Project**
-   (Region: Yevropaga yaqinini tanlang, masalan Frankfurt)
-2. Dashboard → **Connect** → **Pooled connection** yoqilgan holda
-   ulanish manzilini nusxalang. U shunday ko'rinadi:
-   `postgresql://USER:PAROL@ep-xxxx-pooler.eu-central-1.aws.neon.tech/neondb?sslmode=require`
+---
 
-## 2. Lokal ishga tushirish
+## 1. Neon baza (bepul)
 
-Kerak: **Node.js 18.18+** (tavsiya: 20 yoki 22)
+1. https://neon.tech → **New Project** (region: Frankfurt)
+2. **Connect** → **Pooled connection** → manzilni nusxalang → `DATABASE_URL`
 
-```bash
-cp .env.example .env     # va ichini to'ldiring
-npm install
-npm run dev
-```
+Jadvallar ilova birinchi ochilganda o'zi yaratiladi.
 
-Brauzerda: http://localhost:3000
+## 2. Telegram bot
 
-## .env sozlamalari
-
-| O'zgaruvchi | Nima uchun |
-|---|---|
-| `DATABASE_URL` | Neon ulanish manzili (1-qadamdan) |
-| `APP_PASSWORD` | Kirish paroli. Internetda **albatta** qo'ying |
-| `AUTH_SECRET` | Cookie uchun maxfiy kalit: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
-
-`.env` fayli GitHub'ga yuklanmaydi (`.gitignore`da).
+1. [@BotFather](https://t.me/BotFather) → `/newbot` → token → `TELEGRAM_BOT_TOKEN`
+2. [@userinfobot](https://t.me/userinfobot) → `/start` → ID raqamingiz → `TELEGRAM_OWNER_ID`
 
 ## 3. Vercel'ga deploy
 
-1. https://vercel.com → **Add New → Project** → GitHub'dan `Moliya` repo'ni tanlang
-2. **Environment Variables** bo'limiga yuqoridagi 3 ta o'zgaruvchini kiriting
-3. **Deploy** — bir necha daqiqada `moliya-xxx.vercel.app` manzili tayyor
+1. https://vercel.com → **Add New → Project** → GitHub'dan `Moliya`
+2. **Environment Variables** — `.env.example` dagi barcha qiymatlar:
 
-Keyin har safar GitHub'ga push qilganingizda Vercel o'zi qayta deploy qiladi.
-`.env`ni o'zgartirsangiz — Vercel'da **Redeploy** bosing.
+| O'zgaruvchi | Qayerdan |
+|---|---|
+| `DATABASE_URL` | Neon |
+| `APP_PASSWORD` | O'zingiz o'ylab topasiz (brauzerdan kirish uchun) |
+| `AUTH_SECRET` | `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
+| `TELEGRAM_BOT_TOKEN` | @BotFather |
+| `TELEGRAM_OWNER_ID` | @userinfobot |
+| `TELEGRAM_WEBHOOK_SECRET` | Tasodifiy satr (yuqoridagi buyruq bilan) |
+| `CRON_SECRET` | Tasodifiy satr (yuqoridagi buyruq bilan) |
 
-## Bo'limlar
+3. **Deploy**
+4. Saytni oching → parol bilan kiring → manzilga `/api/telegram/setup` qo'shib oching:
+   `https://SIZNING-DOMEN.vercel.app/api/telegram/setup`
+   Bu bir marta qilinadi: webhook, menyu tugmasi ("Ochish") va `/start` buyrug'ini o'rnatadi.
+   Javobda `"ok": true` bo'lishi kerak.
+5. Botga `/start` yozing → **Ilovani ochish** tugmasi chiqadi.
 
-- **Umumiy** — sof qarz holati, umumiy raqamlar, yaqin 45 kunlik muddatlar
-- **Maqsadlar** — nomi, kerakli summa, yig'ilgan pul, muddat; oyiga qancha yig'ish kerakligi
-- **Qarzlarim** — kimdan, qancha, qachon qaytarish; qisman to'lovlar tarixi
-- **Menga qarzlar** — kimga berdim, qancha qaytardi, muddati o'tganlar qizil
-- **Xaridlar** — olishim kerak bo'lgan narsalar: narxi, qachon, muhimligi
+> Domen o'zgarsa (yoki o'z domeningizni ulasangiz) — 4-qadamni takrorlang.
 
-## Ma'lumotlar bazasi
+## Telegram imkoniyatlari
 
-Jadvallar: `goals` (maqsadlar), `debts` (qarzlar), `purchases` (xaridlar),
-`payments` (to'lovlar tarixi). Ularni Neon → **Tables** bo'limida ham ko'rish mumkin.
-Neon'da bazani oldingi holatga qaytarish (restore) imkoniyati ham bor.
+- **Mini App** — bot menyusidagi "Ochish" tugmasi. Telegram ichida parolsiz,
+  avtomatik kiradi (faqat `TELEGRAM_OWNER_ID` egasi uchun). Telegram mavzusiga
+  (kunduzgi/tungi) moslashadi.
+- **Tez qo'shish** — botga shunchaki yozing:
+  - `-25000 tushlik` — xarajat (kategoriya avtomatik: Oziq-ovqat)
+  - `-30k taksi` — xarajat (`k` = ming, `mln` = million)
+  - `+3mln maosh` — kirim
+  - boshqa har qanday matn — yangi vazifa
+- **Ertalabki eslatma** — har kuni 08:00–08:59 (Toshkent) oralig'ida: bugungi
+  vazifalar, kunlik ro'yxat, yaqin qarz muddatlari, kechagi xarajat, o'qilayotgan kitob.
+  Vaqt `vercel.json` da (`0 3 * * *` = UTC 03:00). Vercel bepul tarifida cron kuniga
+  1 marta ishlaydi va soat ichida istalgan daqiqada chaqiriladi.
+
+## Lokal ishga tushirish
+
+```bash
+cp .env.example .env      # kamida DATABASE_URL ni to'ldiring
+npm install
+npm run dev               # http://localhost:3000
+```
+
+`APP_PASSWORD` va `TELEGRAM_BOT_TOKEN` ikkalasi ham bo'sh bo'lsa — parolsiz ochiladi.
 
 ## Tuzilishi
 
 ```
-app/page.tsx              — interfeys
-app/api/...               — REST API (GET /api/data, POST/PATCH/DELETE)
-components/Forms.tsx      — formalar va modal oynalar
-lib/db.ts                 — PostgreSQL ulanishi va jadvallar
-lib/repo.ts               — baza bilan ishlash funksiyalari
-lib/auth.ts, middleware.ts — parol bilan himoya
-app/login/page.tsx        — kirish sahifasi
+app/page.tsx                 — qobiq: menyu, yo'naltirish, Telegram sozlamalari
+components/Today.tsx         — Bugun (bosh sahifa)
+components/Tasks.tsx         — To-do va kunlik vazifalar
+components/Habits.tsx        — Odatlar
+components/Finance.tsx       — Kirim-chiqim, qarzlar, maqsadlar, xaridlar
+components/Notes.tsx         — Eslatmalar
+components/Books.tsx         — Kitoblar
+components/forms.tsx         — barcha formalar
+lib/db.ts                    — PostgreSQL ulanishi va jadvallar sxemasi
+lib/repo.ts                  — baza funksiyalari
+lib/telegram.ts              — initData tekshiruvi, Bot API
+app/api/telegram/webhook     — bot xabarlari
+app/api/telegram/setup       — webhook va menyu tugmasini o'rnatish
+app/api/cron/daily           — ertalabki xabar
+app/api/tg-auth              — Mini App orqali kirish
+middleware.ts                — kirish himoyasi
 ```

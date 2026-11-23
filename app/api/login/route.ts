@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { AUTH_COOKIE, expectedToken, safeEqual } from "@/lib/auth";
+import { AUTH_COOKIE, COOKIE_OPTS, expectedToken, safeEqual } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
@@ -9,21 +9,15 @@ export async function POST(req: Request) {
   if (!real || !safeEqual(String(password || ""), real)) {
     // Parol terish hujumlarini sekinlashtirish
     await new Promise((r) => setTimeout(r, 800));
-    return NextResponse.json({ error: "Parol noto'g'ri" }, { status: 401 });
+    return NextResponse.json({ error: real ? "Parol noto'g'ri" : "Parol bilan kirish o'chirilgan" }, { status: 401 });
   }
   const res = NextResponse.json({ ok: true });
-  res.cookies.set(AUTH_COOKIE, await expectedToken(), {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
-    path: "/",
-    maxAge: 60 * 60 * 24 * 30, // 30 kun
-  });
+  res.cookies.set(AUTH_COOKIE, await expectedToken(), COOKIE_OPTS);
   return res;
 }
 
 export async function DELETE() {
   const res = NextResponse.json({ ok: true });
-  res.cookies.delete(AUTH_COOKIE);
+  res.cookies.set(AUTH_COOKIE, "", { ...COOKIE_OPTS, maxAge: 0 });
   return res;
 }

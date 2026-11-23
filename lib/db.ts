@@ -61,6 +61,67 @@ const SCHEMA = `
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
   );
   CREATE INDEX IF NOT EXISTS idx_payments_ref ON payments(kind, ref_id);
+
+  CREATE TABLE IF NOT EXISTS transactions (
+    id SERIAL PRIMARY KEY,
+    type TEXT NOT NULL CHECK (type IN ('kirim','chiqim')),
+    amount BIGINT NOT NULL,
+    category TEXT NOT NULL DEFAULT 'Boshqa',
+    date DATE NOT NULL DEFAULT CURRENT_DATE,
+    note TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  );
+  CREATE INDEX IF NOT EXISTS idx_tx_date ON transactions(date);
+
+  CREATE TABLE IF NOT EXISTS tasks (
+    id SERIAL PRIMARY KEY,
+    title TEXT NOT NULL,
+    note TEXT,
+    due_date DATE,
+    priority TEXT NOT NULL DEFAULT 'orta' CHECK (priority IN ('yuqori','orta','past')),
+    done SMALLINT NOT NULL DEFAULT 0,
+    done_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  );
+
+  -- kind: 'daily' = kunlik vazifa (har kuni qaytadan), 'habit' = odat (streak bilan)
+  CREATE TABLE IF NOT EXISTS habits (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'habit' CHECK (kind IN ('daily','habit')),
+    emoji TEXT,
+    archived SMALLINT NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  );
+  CREATE TABLE IF NOT EXISTS habit_logs (
+    habit_id INTEGER NOT NULL REFERENCES habits(id) ON DELETE CASCADE,
+    date DATE NOT NULL,
+    PRIMARY KEY (habit_id, date)
+  );
+
+  CREATE TABLE IF NOT EXISTS notes (
+    id SERIAL PRIMARY KEY,
+    title TEXT,
+    body TEXT NOT NULL DEFAULT '',
+    pinned SMALLINT NOT NULL DEFAULT 0,
+    color TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  );
+
+  CREATE TABLE IF NOT EXISTS books (
+    id SERIAL PRIMARY KEY,
+    title TEXT NOT NULL,
+    author TEXT,
+    status TEXT NOT NULL DEFAULT 'reja' CHECK (status IN ('reja','oqiyapman','oqidim')),
+    total_pages INTEGER,
+    current_page INTEGER NOT NULL DEFAULT 0,
+    rating SMALLINT,
+    started DATE,
+    finished DATE,
+    note TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  );
 `;
 
 function pool(): Pool {

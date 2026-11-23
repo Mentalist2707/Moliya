@@ -6,6 +6,11 @@ export const TABLES = {
   goals: ["name", "target", "saved", "deadline", "note"],
   debts: ["direction", "person", "amount", "paid", "taken_date", "due_date", "note"],
   purchases: ["name", "price", "planned_date", "priority", "bought", "note"],
+  transactions: ["type", "amount", "category", "date", "note"],
+  tasks: ["title", "note", "due_date", "priority", "done"],
+  habits: ["name", "kind", "emoji", "archived"],
+  notes: ["title", "body", "pinned", "color"],
+  books: ["title", "author", "status", "total_pages", "current_page", "rating", "started", "finished", "note"],
 } as const;
 
 export type TableName = keyof typeof TABLES;
@@ -14,7 +19,7 @@ export function isTable(t: string): t is TableName {
   return Object.prototype.hasOwnProperty.call(TABLES, t);
 }
 
-const MONEY = new Set(["target", "saved", "amount", "paid", "price"]);
+const MONEY = new Set(["target", "saved", "amount", "paid", "price", "total_pages", "current_page", "rating"]);
 
 function pick(table: TableName, body: Record<string, unknown>) {
   const out: Record<string, unknown> = {};
@@ -32,13 +37,31 @@ function pick(table: TableName, body: Record<string, unknown>) {
 
 export async function getAll(): Promise<AllData> {
   const db = await getDb();
-  const [g, d, p, pay] = await Promise.all([
+  const q = (sql: string) => db.query(sql).then((r) => r.rows);
+  const [g, d, p, pay, transactions, tasks, habits, habit_logs, notes, books] = await Promise.all([
     db.query(`SELECT * FROM goals ORDER BY deadline NULLS LAST, id DESC`),
     db.query(`SELECT * FROM debts ORDER BY due_date NULLS LAST, id DESC`),
     db.query(`SELECT * FROM purchases ORDER BY bought, planned_date NULLS LAST, id DESC`),
     db.query(`SELECT * FROM payments ORDER BY date DESC, id DESC`),
+    q(`SELECT * FROM transactions ORDER BY date DESC, id DESC`),
+    q(`SELECT * FROM tasks ORDER BY done, due_date NULLS LAST, id DESC`),
+    q(`SELECT * FROM habits ORDER BY id`),
+    q(`SELECT * FROM habit_logs WHERE date >= CURRENT_DATE - 400`),
+    q(`SELECT * FROM notes ORDER BY pinned DESC, updated_at DESC`),
+    q(`SELECT * FROM books ORDER BY CASE status WHEN 'oqiyapman' THEN 0 WHEN 'reja' THEN 1 ELSE 2 END, id DESC`),
   ]);
-  return { goals: g.rows, debts: d.rows, purchases: p.rows, payments: pay.rows };
+  return {
+    goals: g.rows,
+    debts: d.rows,
+    purchases: p.rows,
+    payments: pay.rows,
+    transactions,
+    tasks,
+    habits,
+    habit_logs,
+    notes,
+    books,
+  } as AllData;
 }
 
 export async function insert(table: TableName, body: Record<string, unknown>) {
@@ -56,7 +79,11 @@ export async function update(table: TableName, id: number, body: Record<string, 
   const cols = Object.keys(data);
   const db = await getDb();
   if (cols.length) {
-    const sql = `UPDATE ${table} SET ${cols.map((c, i) => `${c}=$${i + 1}`).join(",")} WHERE id=$${cols.length + 1}`;
+    const extra: string[] = [];
+    if (table === "notes") extra.push("updated_at=now()");
+    if (table === "tasks" && "done" in data) extra.push(Number(data.done) ? "done_at=now()" : "done_at=NULL");
+    const sets = [...cols.map((c, i) => `${c}=$${i + 1}`), ...extra].join(",");
+    const sql = `UPDATE ${table} SET ${sets} WHERE id=$${cols.length + 1}`;
     await db.query(sql, [...cols.map((c) => data[c]), id]);
   }
   const r = await db.query(`SELECT * FROM ${table} WHERE id = $1`, [id]);
@@ -114,4 +141,14 @@ export async function removePayment(id: number) {
     else await q("UPDATE debts SET paid = GREATEST(0, paid - $1) WHERE id = $2", [p.amount, p.ref_id]);
     await q("DELETE FROM payments WHERE id = $1", [id]);
   });
+}
+
+// Odat / kunlik vazifani shu kun uchun belgilash yoki belgini olib tashlash
+export async function toggleHabit(habitId: number, date: string, on?: boolean) {
+  const db = await getDb();
+  const exists = (await db.query("SELECT 1 FROM habit_logs WHERE habit_id=$1 AND date=$2", [habitId, date])).rowCount;
+  const want = on ?? !exists;
+  if (want && !exists) await db.query("INSERT INTO habit_logs (habit_id, date) VALUES ($1,$2) ON CONFLICT DO NOTHING", [habitId, date]);
+  if (!want && exists) await db.query("DELETE FROM habit_logs WHERE habit_id=$1 AND date=$2", [habitId, date]);
+  return want;
 }
