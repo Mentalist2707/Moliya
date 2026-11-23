@@ -3,7 +3,7 @@
 Bitta ilovada: **Bugun** (bosh sahifa), **Vazifalar** (to-do + kunlik vazifalar),
 **Odatlar** (streak bilan), **Moliya** (kirim-chiqim, qarzlar, maqsadlar, xaridlar),
 **Eslatmalar** va **Kitoblar**. Telegram Mini App sifatida ishlaydi, bot har kuni
-ertalab eslatma yuboradi.
+ertalab eslatma yuboradi. Ko'p foydalanuvchili: har kim Telegram orqali kiradi.
 
 Texnologiyalar: Next.js 15 · PostgreSQL (Neon) · Vercel.
 
@@ -19,46 +19,56 @@ Jadvallar ilova birinchi ochilganda o'zi yaratiladi.
 ## 2. Telegram bot
 
 1. [@BotFather](https://t.me/BotFather) → `/newbot` → token → `TELEGRAM_BOT_TOKEN`
-2. [@userinfobot](https://t.me/userinfobot) → `/start` → ID raqamingiz → `TELEGRAM_OWNER_ID`
+2. Brauzerdan kirish uchun: @BotFather → `/setdomain` → botingiz → Vercel domeningiz
+   (masalan `moliya.vercel.app`). Busiz faqat Telegram ichidan kirish ishlaydi.
 
 ## 3. Vercel'ga deploy
 
 1. https://vercel.com → **Add New → Project** → GitHub'dan `Moliya`
-2. **Environment Variables** — `.env.example` dagi barcha qiymatlar:
+2. **Environment Variables** (`.env.example` da batafsil):
 
-| O'zgaruvchi | Qayerdan |
-|---|---|
-| `DATABASE_URL` | Neon |
-| `APP_PASSWORD` | O'zingiz o'ylab topasiz (brauzerdan kirish uchun) |
-| `AUTH_SECRET` | `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
-| `TELEGRAM_BOT_TOKEN` | @BotFather |
-| `TELEGRAM_OWNER_ID` | @userinfobot |
-| `TELEGRAM_WEBHOOK_SECRET` | Tasodifiy satr (yuqoridagi buyruq bilan) |
-| `CRON_SECRET` | Tasodifiy satr (yuqoridagi buyruq bilan) |
+| O'zgaruvchi | Majburiy | Qayerdan |
+|---|---|---|
+| `DATABASE_URL` | ✅ | Neon |
+| `TELEGRAM_BOT_TOKEN` | ✅ | @BotFather |
+| `TELEGRAM_WEBHOOK_SECRET` | ✅ | Tasodifiy satr |
+| `AUTH_SECRET` | ✅ | Tasodifiy satr (32+ belgi) |
+| `CRON_SECRET` | ✅ | Tasodifiy satr |
+| `ALLOWED_USER_IDS` | — | Faqat tanlangan odamlar kirsin desangiz |
+| `TELEGRAM_OWNER_ID` | — | Avvalgi versiyadan ma'lumot o'tkazish uchun |
+
+Tasodifiy satr: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`
 
 3. **Deploy**
-4. Saytni oching → parol bilan kiring → manzilga `/api/telegram/setup` qo'shib oching:
-   `https://SIZNING-DOMEN.vercel.app/api/telegram/setup`
-   Bu bir marta qilinadi: webhook, menyu tugmasi ("Ochish") va `/start` buyrug'ini o'rnatadi.
-   Javobda `"ok": true` bo'lishi kerak.
-5. Botga `/start` yozing → **Ilovani ochish** tugmasi chiqadi.
+4. Bir marta oching:
+   `https://SIZNING-DOMEN.vercel.app/api/telegram/setup?key=TELEGRAM_WEBHOOK_SECRET_QIYMATI`
+   Bu webhook, menyu tugmasi ("Ochish") va buyruqlarni o'rnatadi. Javobda `"ok": true` bo'lishi kerak.
+5. Botga `/start` yozing → **Ilovani ochish**.
 
-> Domen o'zgarsa (yoki o'z domeningizni ulasangiz) — 4-qadamni takrorlang.
+> Domen o'zgarsa — 4-qadamni va `/setdomain` ni takrorlang.
+
+## Ko'p foydalanuvchi
+
+- Har kim **Telegram orqali** kiradi: bot ichida (Mini App) avtomatik, brauzerda
+  "Log in with Telegram" tugmasi bilan. Parol yo'q.
+- Har bir foydalanuvchi **faqat o'z ma'lumotini** ko'radi va o'zgartiradi: barcha
+  jadvallarda `user_id` bor, har bir so'rov sessiyadagi ID bo'yicha filtrlanadi.
+- Sessiya — imzolangan cookie (HMAC-SHA256, `AUTH_SECRET`), 60 kun amal qiladi.
+- Sozlamalar (bosh sahifadagi avatar): ertalabki xabarni yoqish/o'chirish, chiqish,
+  hisobni va barcha ma'lumotlarni butunlay o'chirish.
+- Kimlar kirishini cheklash: `ALLOWED_USER_IDS=111,222`.
 
 ## Telegram imkoniyatlari
 
-- **Mini App** — bot menyusidagi "Ochish" tugmasi. Telegram ichida parolsiz,
-  avtomatik kiradi (faqat `TELEGRAM_OWNER_ID` egasi uchun). Telegram mavzusiga
-  (kunduzgi/tungi) moslashadi.
-- **Tez qo'shish** — botga shunchaki yozing:
-  - `-25000 tushlik` — xarajat (kategoriya avtomatik: Oziq-ovqat)
+- **Tez qo'shish** — botga yozing:
+  - `-25000 tushlik` — xarajat (kategoriya avtomatik)
   - `-30k taksi` — xarajat (`k` = ming, `mln` = million)
   - `+3mln maosh` — kirim
   - boshqa har qanday matn — yangi vazifa
-- **Ertalabki eslatma** — har kuni 08:00–08:59 (Toshkent) oralig'ida: bugungi
-  vazifalar, kunlik ro'yxat, yaqin qarz muddatlari, kechagi xarajat, o'qilayotgan kitob.
-  Vaqt `vercel.json` da (`0 3 * * *` = UTC 03:00). Vercel bepul tarifida cron kuniga
-  1 marta ishlaydi va soat ichida istalgan daqiqada chaqiriladi.
+- **Ertalabki xabar** — har kuni 08:00–08:59 (Toshkent) oralig'ida har bir foydalanuvchiga
+  o'z rejasi. Aytadigan gap bo'lmasa yuborilmaydi. Botni bloklaganlarga avtomatik to'xtaydi.
+  `/stop` — o'chirish, `/digest` — yoqish.
+  Vercel bepul tarifida cron kuniga 1 marta, soat ichida istalgan daqiqada ishlaydi.
 
 ## Lokal ishga tushirish
 
@@ -68,7 +78,7 @@ npm install
 npm run dev               # http://localhost:3000
 ```
 
-`APP_PASSWORD` va `TELEGRAM_BOT_TOKEN` ikkalasi ham bo'sh bo'lsa — parolsiz ochiladi.
+`TELEGRAM_BOT_TOKEN` bo'sh bo'lsa — lokal rejim: login so'ralmaydi, bitta foydalanuvchi.
 
 ## Tuzilishi
 
@@ -88,5 +98,9 @@ app/api/telegram/webhook     — bot xabarlari
 app/api/telegram/setup       — webhook va menyu tugmasini o'rnatish
 app/api/cron/daily           — ertalabki xabar
 app/api/tg-auth              — Mini App orqali kirish
+app/api/auth/telegram        — brauzerdan Telegram Login Widget orqali kirish
+app/api/me                   — profil, sozlamalar, hisobni o'chirish
+lib/auth.ts                  — imzolangan sessiya, ruxsatlar
+lib/digest.ts                — ertalabki xabar matni
 middleware.ts                — kirish himoyasi
 ```

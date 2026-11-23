@@ -11,6 +11,7 @@ import Habits from "@/components/Habits";
 import Finance from "@/components/Finance";
 import Notes from "@/components/Notes";
 import Books from "@/components/Books";
+import Settings, { Avatar, type Me } from "@/components/Settings";
 
 const NAV: { id: Tab; label: string; short: string; icon: keyof typeof I; color: string }[] = [
   { id: "bugun", label: "Bugun", short: "Bugun", icon: "today", color: "var(--brand)" },
@@ -48,8 +49,8 @@ export default function Home() {
   const [tab, setTab] = useState<Tab>("bugun");
   const [fin, setFin] = useState<FinSub>("tx");
   const [toastMsg, setToastMsg] = useState("");
-  const [name, setName] = useState<string | undefined>();
-  const [inTg, setInTg] = useState(false);
+  const [me, setMe] = useState<Me | null>(null);
+  const [settings, setSettings] = useState(false);
 
   const reload = useCallback(async () => {
     try {
@@ -70,6 +71,7 @@ export default function Home() {
   useEffect(() => {
     reload();
     readHash();
+    api<Me>("/api/me").then(setMe).catch(() => {});
     window.addEventListener("hashchange", readHash);
     // Boshqa oynadan qaytganda yangilash (masalan, botga xarajat yozgandan keyin)
     const onVis = () => document.visibilityState === "visible" && reload();
@@ -78,7 +80,6 @@ export default function Home() {
     // Telegram Mini App sozlamalari
     const w = tgApp();
     if (w) {
-      setInTg(true);
       w.ready();
       w.expand();
       w.disableVerticalSwipes?.();
@@ -90,7 +91,6 @@ export default function Home() {
       };
       apply();
       w.onEvent?.("themeChanged", apply);
-      setName(w.initDataUnsafe?.user?.first_name);
     }
     return () => {
       window.removeEventListener("hashchange", readHash);
@@ -156,16 +156,10 @@ export default function Home() {
             );
           })}
           <div className="spacer" />
-          {!inTg && (
-            <button
-              className="navbtn"
-              onClick={async () => {
-                await fetch("/api/login", { method: "DELETE" });
-                location.href = "/login";
-              }}
-            >
-              <I.logout />
-              Chiqish
+          {me && (
+            <button className="navbtn" onClick={() => setSettings(true)} style={{ minHeight: 56 }}>
+              <Avatar me={me} size={30} />
+              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{me.first_name || "Sozlamalar"}</span>
             </button>
           )}
         </nav>
@@ -190,7 +184,7 @@ export default function Home() {
                 <div className="skeleton" />
               </>
             )}
-            {data && tab === "bugun" && <Today go={go} name={name} />}
+            {data && tab === "bugun" && <Today go={go} me={me} openSettings={() => setSettings(true)} />}
             {data && tab === "vazifalar" && <Tasks />}
             {data && tab === "odatlar" && <Habits />}
             {data && tab === "moliya" && <Finance sub={fin} setSub={(s) => go("moliya", s)} />}
@@ -211,6 +205,7 @@ export default function Home() {
           })}
         </nav>
       </div>
+      {settings && me && <Settings me={me} onChange={setMe} onClose={() => setSettings(false)} />}
       {toastMsg && (
         <div className="toast" role="status">
           {toastMsg}

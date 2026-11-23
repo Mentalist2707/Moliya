@@ -1,10 +1,9 @@
 import crypto from "crypto";
 
 const TOKEN = () => process.env.TELEGRAM_BOT_TOKEN || "";
-export const OWNER_ID = () => Number(process.env.TELEGRAM_OWNER_ID || 0);
 export const TZ = () => process.env.APP_TZ || "Asia/Tashkent";
 
-export type TgUser = { id: number; first_name?: string; username?: string };
+export type TgUser = { id: number; first_name?: string; last_name?: string; username?: string; photo_url?: string };
 
 /**
  * Telegram Mini App initData'sini tekshiradi.
@@ -31,6 +30,33 @@ export function verifyInitData(initData: string, maxAgeSec = 60 * 60 * 24): TgUs
   } catch {
     return null;
   }
+}
+
+/**
+ * Brauzer uchun Telegram Login Widget ma'lumotini tekshiradi.
+ * https://core.telegram.org/widgets/login#checking-authorization
+ */
+export function verifyLoginWidget(data: Record<string, unknown>, maxAgeSec = 60 * 60 * 24): TgUser | null {
+  const token = TOKEN();
+  const hash = String(data.hash || "");
+  if (!token || !hash) return null;
+  const dataCheck = Object.keys(data)
+    .filter((k) => k !== "hash" && data[k] !== undefined && data[k] !== null)
+    .sort()
+    .map((k) => `${k}=${data[k]}`)
+    .join("\n");
+  const secret = crypto.createHash("sha256").update(token).digest();
+  const calc = crypto.createHmac("sha256", secret).update(dataCheck).digest("hex");
+  if (calc.length !== hash.length || !crypto.timingSafeEqual(Buffer.from(calc), Buffer.from(hash))) return null;
+  const authDate = Number(data.auth_date || 0);
+  if (!authDate || Date.now() / 1000 - authDate > maxAgeSec) return null;
+  return {
+    id: Number(data.id),
+    first_name: data.first_name as string | undefined,
+    last_name: data.last_name as string | undefined,
+    username: data.username as string | undefined,
+    photo_url: data.photo_url as string | undefined,
+  };
 }
 
 export async function tg(method: string, body: Record<string, unknown>): Promise<{ ok: boolean; description?: string; result?: unknown }> {

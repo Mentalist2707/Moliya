@@ -10,10 +10,12 @@ import { HabitCheckRow, TaskRow } from "./Tasks";
 import { BookCover } from "./Books";
 import { I } from "./icons";
 import type { Tab } from "@/lib/nav";
+import { Avatar, type Me } from "./Settings";
 
 type Quick = "task" | "chiqim" | "kirim" | "note" | "debt" | "book" | "daily" | null;
 
-export default function Today({ go, name }: { go: (t: Tab, sub?: string) => void; name?: string }) {
+export default function Today({ go, me, openSettings }: { go: (t: Tab, sub?: string) => void; me: Me | null; openSettings: () => void }) {
+  const name = me?.first_name || undefined;
   const { d, act, haptic } = useStore();
   const [quickMenu, setQuickMenu] = useState(false);
   const [quick, setQuick] = useState<Quick>(null);
@@ -58,7 +60,16 @@ export default function Today({ go, name }: { go: (t: Tab, sub?: string) => void
 
   return (
     <>
-      <div className="card hero">
+      <div className="card hero" style={{ position: "relative" }}>
+        {me && (
+          <button
+            onClick={openSettings}
+            aria-label="Sozlamalar"
+            style={{ position: "absolute", top: 14, right: 14, border: 0, background: "none", padding: 0, borderRadius: "50%" }}
+          >
+            <Avatar me={me} size={36} />
+          </button>
+        )}
         <div className="ring" role="img" aria-label={`Bugun ${Math.round(pct * 100)}% bajarildi`}>
           <svg viewBox="0 0 112 112">
             <circle cx="56" cy="56" r={R} fill="none" stroke="var(--surface-2)" strokeWidth="11" />
@@ -81,7 +92,7 @@ export default function Today({ go, name }: { go: (t: Tab, sub?: string) => void
           </div>
         </div>
         <div>
-          <h1>
+          <h1 style={{ paddingRight: 40 }}>
             {greeting()}
             {name ? `, ${name}` : ""}!
           </h1>

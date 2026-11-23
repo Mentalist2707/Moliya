@@ -124,6 +124,37 @@ const SCHEMA = `
   );
 `;
 
+// Ko'p foydalanuvchili rejim: har bir jadvalda user_id (Telegram ID)
+const USER_TABLES = ["goals", "debts", "purchases", "payments", "transactions", "tasks", "habits", "habit_logs", "notes", "books"];
+
+const MIGRATE = `
+  CREATE TABLE IF NOT EXISTS users (
+    id BIGINT PRIMARY KEY,               -- Telegram user ID
+    first_name TEXT,
+    last_name TEXT,
+    username TEXT,
+    photo_url TEXT,
+    daily_digest SMALLINT NOT NULL DEFAULT 1,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_seen TIMESTAMPTZ NOT NULL DEFAULT now()
+  );
+  ${USER_TABLES.map(
+    (t) => `ALTER TABLE ${t} ADD COLUMN IF NOT EXISTS user_id BIGINT;
+  CREATE INDEX IF NOT EXISTS idx_${t}_user ON ${t}(user_id);`
+  ).join("\n  ")}
+`;
+
+async function migrate(p: Pool) {
+  await p.query(SCHEMA);
+  await p.query(MIGRATE);
+  // Avvalgi (bir kishilik) versiyadagi ma'lumotlarni egasiga biriktirish
+  const owner = Number(process.env.TELEGRAM_OWNER_ID || 0);
+  if (owner) {
+    await p.query("INSERT INTO users (id) VALUES ($1) ON CONFLICT DO NOTHING", [owner]);
+    for (const t of USER_TABLES) await p.query(`UPDATE ${t} SET user_id=$1 WHERE user_id IS NULL`, [owner]);
+  }
+}
+
 function pool(): Pool {
   if (!global.__moliyaPool) {
     const url = process.env.DATABASE_URL;
@@ -143,7 +174,7 @@ function pool(): Pool {
 export async function getDb(): Promise<Pool> {
   const p = pool();
   if (!global.__moliyaReady) {
-    global.__moliyaReady = p.query(SCHEMA).then(() => undefined);
+    global.__moliyaReady = migrate(p);
     global.__moliyaReady.catch(() => (global.__moliyaReady = undefined));
   }
   await global.__moliyaReady;
