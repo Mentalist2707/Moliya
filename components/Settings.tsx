@@ -18,6 +18,9 @@ export type Me = {
   prayer_list: string;
   qaza_remind: number;
   qaza_goal: number;
+  fast_remind: number;
+  sahar_offset: number;
+  quran_goal: number;
   local: boolean;
 };
 
@@ -159,6 +162,35 @@ export default function Settings({ me, onClose, onChange }: { me: Me; onClose: (
                 </div>
               </>
             )}
+            <h4 style={{ margin: "8px 0 -4px", fontSize: 13, color: "var(--muted)" }}>Ro&apos;za va Qur&apos;on</h4>
+            <Toggle
+              title="Saharlik va iftorlik eslatmalari"
+              sub="Ramazonda har kuni, boshqa paytda — «niyat» qilgan kunlaringiz"
+              on={!!me.fast_remind}
+              onToggle={(v) => save({ fast_remind: v })}
+            />
+            {!!me.fast_remind && (
+              <div className="field">
+                <label htmlFor="so">Saharlikdan qancha oldin eslatsin</label>
+                <select id="so" value={me.sahar_offset} onChange={(e) => save({ sahar_offset: Number(e.target.value) })}>
+                  {[15, 30, 45, 60].map((n) => (
+                    <option key={n} value={n}>
+                      Og&apos;iz yopishdan {n} daqiqa oldin
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+            <div className="field">
+              <label htmlFor="qrg">Qur&apos;on: kunlik maqsad</label>
+              <select id="qrg" value={me.quran_goal} onChange={(e) => save({ quran_goal: Number(e.target.value) })}>
+                {[0, 1, 2, 3, 4, 5, 10, 20].map((n) => (
+                  <option key={n} value={n}>
+                    {n ? `${n} sahifa / kun${n === 20 ? " (oyiga 1 xatm)" : ""}` : "Belgilanmagan"}
+                  </option>
+                ))}
+              </select>
+            </div>
             <div className="field">
               <label htmlFor="qg">Kunlik qazo maqsadi</label>
               <select id="qg" value={me.qaza_goal} onChange={(e) => save({ qaza_goal: Number(e.target.value) })}>

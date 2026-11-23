@@ -3,11 +3,35 @@
 import { useState } from "react";
 import type { Note } from "@/lib/types";
 import { sana } from "@/lib/format";
-import { Empty, useStore } from "./ui";
+import { Empty, Seg, useStore } from "./ui";
+import Birthdays from "./Birthdays";
 import { NoteEditor } from "./forms";
 import { I } from "./icons";
 
 export default function Notes() {
+  const [seg, setSeg] = useState<"notes" | "bday">("notes");
+  return (
+    <>
+      <div className="ph">
+        <div>
+          <h1>Eslatmalar</h1>
+        </div>
+      </div>
+      <Seg
+        label="Bo'lim"
+        value={seg}
+        onChange={setSeg}
+        options={[
+          { v: "notes", t: "Yozuvlar" },
+          { v: "bday", t: "Tug'ilgan kunlar" },
+        ]}
+      />
+      {seg === "notes" ? <NotesList /> : <Birthdays />}
+    </>
+  );
+}
+
+function NotesList() {
   const { d } = useStore();
   const [q, setQ] = useState("");
   const [open, setOpen] = useState<Note | "new" | null>(null);
@@ -16,12 +40,6 @@ export default function Notes() {
 
   return (
     <>
-      <div className="ph">
-        <div>
-          <h1>Eslatmalar</h1>
-          <p>{d.notes.length} ta yozuv</p>
-        </div>
-      </div>
       {d.notes.length > 3 && <input className="search" type="search" placeholder="Qidirish…" aria-label="Eslatmalarni qidirish" value={q} onChange={(e) => setQ(e.target.value)} />}
       {list.length === 0 ? (
         <div className="card">

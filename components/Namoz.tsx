@@ -2,7 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { todayStr } from "@/lib/format";
-import { api, Check, Empty, useStore } from "./ui";
+import { api, Check, Empty, Seg, useStore } from "./ui";
+import Fasting from "./Fasting";
+import Quran from "./Quran";
 import { I } from "./icons";
 
 export type PrayerResp = {
@@ -13,7 +15,7 @@ export type PrayerResp = {
 };
 
 export const FARZ = ["bomdod", "peshin", "asr", "shom", "xufton"] as const;
-export const QAZA_KINDS = ["bomdod", "peshin", "asr", "shom", "xufton", "vitr"] as const;
+export const QAZA_KINDS = ["bomdod", "peshin", "asr", "shom", "xufton", "vitr"] as const; // ro'za qazosi Ro'za bo'limida
 export const PNAME: Record<string, string> = { bomdod: "Bomdod", quyosh: "Quyosh", peshin: "Peshin", asr: "Asr", shom: "Shom", xufton: "Xufton", vitr: "Vitr" };
 
 const cache = new Map<string, PrayerResp>();
@@ -99,7 +101,43 @@ export function PrayerChecks({ date, compact }: { date: string; compact?: boolea
   );
 }
 
-export default function Namoz({ openSettings }: { openSettings: () => void }) {
+export default function Ibodat({ openSettings, quranGoal }: { openSettings: () => void; quranGoal: number }) {
+  const [seg, setSeg] = useState<"namoz" | "roza" | "quron">(() => {
+    if (typeof window === "undefined") return "namoz";
+    const h = location.hash.split("-")[1];
+    return h === "roza" || h === "quron" ? h : "namoz";
+  });
+  return (
+    <>
+      <div className="ph">
+        <div>
+          <h1>Ibodat</h1>
+        </div>
+        <button className="btn sm soft" onClick={openSettings}>
+          Eslatmalar
+        </button>
+      </div>
+      <Seg
+        label="Ibodat bo'limi"
+        value={seg}
+        onChange={(v) => {
+          setSeg(v);
+          history.replaceState(null, "", "#namoz" + (v === "namoz" ? "" : "-" + v));
+        }}
+        options={[
+          { v: "namoz", t: "Namoz" },
+          { v: "roza", t: "Ro'za" },
+          { v: "quron", t: "Qur'on" },
+        ]}
+      />
+      {seg === "namoz" && <NamozPage />}
+      {seg === "roza" && <Fasting />}
+      {seg === "quron" && <Quran goal={quranGoal} openSettings={openSettings} />}
+    </>
+  );
+}
+
+function NamozPage() {
   const { d, act, haptic } = useStore();
   const date = todayStr();
   const { data, err } = usePrayer(date);
@@ -112,15 +150,9 @@ export default function Namoz({ openSettings }: { openSettings: () => void }) {
 
   return (
     <>
-      <div className="ph">
-        <div>
-          <h1>Namoz</h1>
-          <p>{data ? `${data.region} · ${data.times.source === "hisob" ? "hisoblangan vaqt" : "islom.uz"}` : "Yuklanmoqda…"}</p>
-        </div>
-        <button className="btn sm soft" onClick={openSettings}>
-          Eslatmalar
-        </button>
-      </div>
+      <p style={{ margin: "-8px 0 0", color: "var(--muted)", fontSize: 14 }}>
+        {data ? `${data.region} · ${data.times.source === "hisob" ? "hisoblangan vaqt" : "islom.uz"}` : "Yuklanmoqda…"}
+      </p>
 
       {err && (
         <div className="card">

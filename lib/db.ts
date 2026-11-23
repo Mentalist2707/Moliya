@@ -213,10 +213,89 @@ const MIGRATE_V3 = `
   );
 `;
 
+// 4-bosqich: to'lovlar, byudjet, tug'ilgan kunlar, ro'za, Qur'on, zakot
+const MIGRATE_V4 = `
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS fast_remind SMALLINT NOT NULL DEFAULT 1;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS sahar_offset SMALLINT NOT NULL DEFAULT 30;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS quran_goal SMALLINT NOT NULL DEFAULT 0;
+
+  -- Oylik to'lovlar va obunalar
+  CREATE TABLE IF NOT EXISTS bills (
+    id SERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL,
+    name TEXT NOT NULL,
+    amount BIGINT NOT NULL DEFAULT 0,
+    day SMALLINT NOT NULL CHECK (day BETWEEN 1 AND 31),
+    category TEXT NOT NULL DEFAULT 'Kommunal',
+    remind_days SMALLINT NOT NULL DEFAULT 1,
+    last_paid DATE,
+    active SMALLINT NOT NULL DEFAULT 1,
+    note TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  );
+  CREATE INDEX IF NOT EXISTS idx_bills_user ON bills(user_id);
+
+  -- Kategoriya bo'yicha oylik xarajat limiti
+  CREATE TABLE IF NOT EXISTS budgets (
+    user_id BIGINT NOT NULL,
+    category TEXT NOT NULL,
+    amount BIGINT NOT NULL,
+    PRIMARY KEY (user_id, category)
+  );
+
+  CREATE TABLE IF NOT EXISTS birthdays (
+    id SERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL,
+    name TEXT NOT NULL,
+    month SMALLINT NOT NULL CHECK (month BETWEEN 1 AND 12),
+    day SMALLINT NOT NULL CHECK (day BETWEEN 1 AND 31),
+    year SMALLINT,
+    note TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  );
+  CREATE INDEX IF NOT EXISTS idx_birthdays_user ON birthdays(user_id);
+
+  -- Ro'za kundaligi: niyat (tutmoqchiman), tutdim, qoldi
+  CREATE TABLE IF NOT EXISTS fast_log (
+    user_id BIGINT NOT NULL,
+    date DATE NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('niyat','tutdim','qoldi')),
+    PRIMARY KEY (user_id, date)
+  );
+
+  -- Qur'on: joriy sahifa (0–604) va xatmlar soni; kunlik o'qilgan sahifalar
+  CREATE TABLE IF NOT EXISTS quran (
+    user_id BIGINT PRIMARY KEY,
+    page INTEGER NOT NULL DEFAULT 0,
+    khatm INTEGER NOT NULL DEFAULT 0
+  );
+  CREATE TABLE IF NOT EXISTS quran_log (
+    user_id BIGINT NOT NULL,
+    date DATE NOT NULL,
+    pages INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (user_id, date)
+  );
+
+  -- Zakot uchun qo'lda kiritiladigan mablag'lar
+  CREATE TABLE IF NOT EXISTS zakat (
+    user_id BIGINT PRIMARY KEY,
+    cash_uzs BIGINT NOT NULL DEFAULT 0,
+    cash_usd DOUBLE PRECISION NOT NULL DEFAULT 0,
+    gold_g DOUBLE PRECISION NOT NULL DEFAULT 0,
+    trade_uzs BIGINT NOT NULL DEFAULT 0,
+    nisab_uzs BIGINT NOT NULL DEFAULT 100000000,
+    include_goals SMALLINT NOT NULL DEFAULT 1,
+    include_crypto SMALLINT NOT NULL DEFAULT 1,
+    include_debts SMALLINT NOT NULL DEFAULT 1,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  );
+`;
+
 async function migrate(p: Pool) {
   await p.query(SCHEMA);
   await p.query(MIGRATE);
   await p.query(MIGRATE_V3);
+  await p.query(MIGRATE_V4);
   // Avvalgi (bir kishilik) versiyadagi ma'lumotlarni egasiga biriktirish
   const owner = Number(process.env.TELEGRAM_OWNER_ID || 0);
   if (owner) {

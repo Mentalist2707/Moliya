@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getAll, insert, isTable } from "@/lib/repo";
 import { withUser } from "@/lib/api";
+import { checkBudget } from "@/lib/budget";
 
 export const dynamic = "force-dynamic";
 
@@ -16,5 +17,7 @@ export const GET = withUser<Ctx>(async (_req, uid, { params }) => {
 export const POST = withUser<Ctx>(async (req, uid, { params }) => {
   const { table } = await params;
   if (!isTable(table)) return NextResponse.json({ error: "Noma'lum bo'lim" }, { status: 404 });
-  return NextResponse.json(await insert(uid, table, await req.json()), { status: 201 });
+  const row = (await insert(uid, table, await req.json())) as Record<string, unknown>;
+  if (table === "transactions" && row?.type === "chiqim") await checkBudget(uid, String(row.category), String(row.date).slice(0, 10));
+  return NextResponse.json(row, { status: 201 });
 });

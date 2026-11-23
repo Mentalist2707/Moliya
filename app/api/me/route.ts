@@ -22,6 +22,9 @@ export const GET = withUser(async (_req, uid) => {
     prayer_list: u?.prayer_list ?? "bomdod,peshin,asr,shom,xufton",
     qaza_remind: u?.qaza_remind ?? 1,
     qaza_goal: u?.qaza_goal ?? 0,
+    fast_remind: u?.fast_remind ?? 1,
+    sahar_offset: u?.sahar_offset ?? 30,
+    quran_goal: u?.quran_goal ?? 0,
     local: !authEnabled(),
   });
 });

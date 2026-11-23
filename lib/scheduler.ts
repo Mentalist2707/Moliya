@@ -4,6 +4,7 @@ import { getPrices, portfolio, type HoldingRow } from "./market";
 import { getDayTimes, PRAYER_NAMES, toMin, type PrayerKey } from "./prayer";
 import { setDigest, type User } from "./repo";
 import { esc, som, tg } from "./telegram";
+import { billStatus, hijri, isRamadan, nextBirthday } from "./calendar";
 
 /**
  * Aniq vaqtli rejalashtiruvchi. /api/cron/tick har daqiqada chaqiriladi (cron-job.org).
@@ -25,7 +26,13 @@ export function tashkentNow(ms = Date.now()) {
  * Reja soatiga bir marta yoki sana o'zgarganda yangilanadi — shu payt bazaga bitta murojaat.
  * Shunda baza faqat xabar yuborish kerak bo'lgan daqiqalarda uyg'onadi.
  */
-type Plan = { date: string; loadedAt: number; users: User[]; times: Map<string, Awaited<ReturnType<typeof getDayTimes>>> };
+type Plan = {
+  date: string;
+  loadedAt: number;
+  users: User[];
+  times: Map<string, Awaited<ReturnType<typeof getDayTimes>>>;
+  fasting: Set<number>; // bugun ro'za eslatmasi oladiganlar
+};
 let PLAN: Plan | null = null;
 const PLAN_TTL = 60 * 60 * 1000;
 
@@ -33,13 +40,25 @@ async function loadPlan(date: string): Promise<Plan> {
   const db = await getDb();
   const users = (
     await db.query(
-      `SELECT id, first_name, daily_digest, morning_time, crypto_report, region, prayer_remind, prayer_offset, prayer_list, qaza_remind, qaza_goal
-       FROM users WHERE daily_digest=1 OR prayer_remind=1`
+      `SELECT id, first_name, daily_digest, morning_time, crypto_report, region, prayer_remind, prayer_offset, prayer_list,
+              qaza_remind, qaza_goal, fast_remind, sahar_offset, quran_goal
+       FROM users WHERE daily_digest=1 OR prayer_remind=1 OR fast_remind=1`
     )
   ).rows as User[];
+  // Ro'za: Ramazonda — "qoldi" belgilamaganlar; boshqa kunlari — "niyat" qilganlar
+  const logs = (await db.query("SELECT user_id, status FROM fast_log WHERE date=$1", [date])).rows as { user_id: number; status: string }[];
+  const st = new Map(logs.map((l) => [Number(l.user_id), l.status]));
+  const ramadan = isRamadan(date);
+  const fasting = new Set<number>();
+  for (const u of users) {
+    if (!u.fast_remind) continue;
+    const s = st.get(Number(u.id));
+    if ((ramadan && s !== "qoldi") || s === "niyat" || (s === "tutdim" && !ramadan)) fasting.add(Number(u.id));
+  }
   const times = new Map<string, Awaited<ReturnType<typeof getDayTimes>>>();
-  for (const r of new Set(users.filter((u) => u.prayer_remind).map((u) => u.region))) times.set(r, await getDayTimes(r, date));
-  PLAN = { date, loadedAt: Date.now(), users, times };
+  const regions = new Set(users.filter((u) => u.prayer_remind || fasting.has(Number(u.id))).map((u) => u.region));
+  for (const r of regions) times.set(r, await getDayTimes(r, date));
+  PLAN = { date, loadedAt: Date.now(), users, times, fasting };
   return PLAN;
 }
 
@@ -48,10 +67,10 @@ export function invalidatePlan() {
   PLAN = null;
 }
 
-type Due = { morning: User[]; prayers: { u: User; p: PrayerKey; at: number }[] };
+type Due = { morning: User[]; prayers: { u: User; p: PrayerKey; at: number }[]; fasts: { u: User; kind: "sahar" | "iftor" }[] };
 
 function dueAt(plan: Plan, min: number, morningTolerance: number): Due {
-  const due: Due = { morning: [], prayers: [] };
+  const due: Due = { morning: [], prayers: [], fasts: [] };
   for (const u of plan.users) {
     if (u.daily_digest) {
       const mt = toMin(u.morning_time || "08:30");
@@ -65,6 +84,14 @@ function dueAt(plan: Plan, min: number, morningTolerance: number): Due {
         const at = toMin(t[p]) - (u.prayer_offset || 0);
         if (min >= at && min <= at + 5) due.prayers.push({ u, p, at });
       }
+    }
+    if (plan.fasting.has(Number(u.id))) {
+      const t = plan.times.get(u.region);
+      if (!t) continue;
+      const sahar = toMin(t.bomdod) - (u.sahar_offset || 30);
+      const iftor = toMin(t.shom);
+      if (min >= sahar && min <= sahar + 5) due.fasts.push({ u, kind: "sahar" });
+      if (min >= iftor && min <= iftor + 5) due.fasts.push({ u, kind: "iftor" });
     }
   }
   return due;
@@ -137,6 +164,50 @@ async function qazaSection(uid: number, goal: number): Promise<string | null> {
   return `<b>🕋 Qazo namozlar: ${total} ta</b>\n${rows.map((r) => `${names[r.prayer] ?? r.prayer}: ${r.count}`).join(" · ")}${goal ? `\nBugungi maqsad: ${goal} ta qazo o'qish` : ""}`;
 }
 
+/** To'lovlar, tug'ilgan kunlar, Qur'on, ro'za */
+async function extrasSection(u: User, date: string): Promise<string | null> {
+  const db = await getDb();
+  const uid = Number(u.id);
+  const [bills, bdays, quran, todayQ, fast] = await Promise.all([
+    db.query("SELECT name, amount, day, remind_days, last_paid FROM bills WHERE user_id=$1 AND active=1", [uid]).then((r) => r.rows),
+    db.query("SELECT name, month, day, year FROM birthdays WHERE user_id=$1", [uid]).then((r) => r.rows),
+    db.query("SELECT page, khatm FROM quran WHERE user_id=$1", [uid]).then((r) => r.rows[0]),
+    db.query("SELECT COALESCE(SUM(pages),0)::int AS p FROM quran_log WHERE user_id=$1 AND date >= $2::date - 6", [uid, date]).then((r) => r.rows[0]),
+    db.query("SELECT status FROM fast_log WHERE user_id=$1 AND date=$2", [uid, date]).then((r) => r.rows[0]),
+  ]);
+  const L: string[] = [];
+  const when = (n: number) => (n === 0 ? "bugun" : n === 1 ? "ertaga" : n < 0 ? `${-n} kun o'tdi ⚠️` : `${n} kundan keyin`);
+
+  const dueBills = bills
+    .map((b) => ({ b, s: billStatus({ day: b.day, last_paid: b.last_paid }, date) }))
+    .filter(({ b, s }) => s.left <= Math.max(0, Number(b.remind_days)))
+    .sort((a, b) => a.s.left - b.s.left);
+  if (dueBills.length) {
+    L.push("<b>📅 To'lovlar</b>");
+    for (const { b, s } of dueBills) L.push(`• ${esc(b.name)}${Number(b.amount) ? ` — ${som(Number(b.amount))} so'm` : ""} (${when(s.left)})`);
+  }
+
+  const near = bdays.map((b) => ({ b, n: nextBirthday({ month: b.month, day: b.day, year: b.year }, date) })).filter(({ n }) => n.left <= 1);
+  if (near.length) {
+    if (L.length) L.push("");
+    L.push("<b>🎂 Tug'ilgan kunlar</b>");
+    for (const { b, n } of near) L.push(`• ${esc(b.name)} — ${n.left === 0 ? "<b>bugun</b>" : "ertaga"}${n.age ? ` (${n.age} yosh)` : ""}`);
+  }
+
+  const h = hijri(date);
+  if (u.fast_remind && (h.month === 9 || fast?.status === "niyat")) {
+    if (L.length) L.push("");
+    L.push(h.month === 9 ? `<b>🌙 Ramazonning ${h.day}-kuni</b>` : "<b>🌙 Bugun ro'za niyatingiz bor</b>");
+  }
+
+  if (u.quran_goal) {
+    if (L.length) L.push("");
+    const page = Number(quran?.page || 0);
+    L.push(`<b>📖 Qur'on</b>: bugungi maqsad ${u.quran_goal} sahifa · xatm ${Math.round((page / 604) * 100)}% (${page}/604) · 7 kunda ${todayQ?.p ?? 0} sahifa`);
+  }
+  return L.length ? L.join("\n") : null;
+}
+
 export async function buildMorning(u: User, date: string): Promise<string | null> {
   const parts: string[] = [];
   const digest = await buildDigest(Number(u.id), u.first_name).catch(() => null);
@@ -154,6 +225,8 @@ export async function buildMorning(u: User, date: string): Promise<string | null
     const q = await qazaSection(Number(u.id), u.qaza_goal);
     if (q) parts.push(q);
   }
+  const extra = await extrasSection(u, date).catch((e) => (console.error("[morning] extras:", e), null));
+  if (extra) parts.push(extra);
   if (!digest && !parts.length) return null;
   const head = digest ?? `☀️ <b>Xayrli tong${u.first_name ? ", " + esc(u.first_name) : ""}!</b> Bugun ${date.split("-").reverse().join(".")}`;
   return [head, ...parts].join("\n\n");
@@ -184,7 +257,7 @@ export async function tick(appUrl: string, opts: { now?: number; fallback?: bool
     res.planLoaded = true;
   }
   const due = dueAt(plan, min, opts.fallback ? 180 : 5);
-  if (!due.morning.length && !due.prayers.length) return { ...res, skipped: !res.planLoaded };
+  if (!due.morning.length && !due.prayers.length && !due.fasts.length) return { ...res, skipped: !res.planLoaded };
 
   const db = await getDb();
   if (opts.now !== undefined) res.preview = []; // lokal sinov: yuboriladigan matnlarni qaytarish
@@ -212,6 +285,26 @@ export async function tick(appUrl: string, opts: { now?: number; fallback?: bool
     const text = `${head} — ${t[p]}\n<i>${esc(u.region)}${t.source === "hisob" ? "" : ""}</i>`;
     res.preview?.push({ uid: Number(u.id), kind: `prayer:${p}`, text });
     const ok = await send(Number(u.id), text, { reply_markup: prayButton(date, p, appUrl) });
+    if (ok) res.prayer++;
+    else await release(Number(u.id), key);
+  }
+  // 3) Saharlik va iftorlik
+  for (const { u, kind } of due.fasts) {
+    const key = `f:${date}:${kind}`;
+    if (!(await claim(Number(u.id), key))) continue;
+    const t = plan.times.get(u.region)!;
+    const h = hijri(date);
+    const day = h.month === 9 ? ` · Ramazonning ${h.day}-kuni` : "";
+    const text =
+      kind === "sahar"
+        ? `🌙 <b>Saharlik</b> — og'iz yopishga ${u.sahar_offset || 30} daqiqa qoldi (${t.bomdod})${day}\n<i>${esc(u.region)}</i>`
+        : `🌇 <b>Iftorlik vaqti</b> — ${t.shom}${day}\nRo'zangiz qabul bo'lsin! 🤲\n<i>${esc(u.region)}</i>`;
+    const extra =
+      kind === "iftor"
+        ? { reply_markup: { inline_keyboard: [[{ text: "✅ Ro'za tutdim", callback_data: `fs:${date}:tutdim` }, { text: "Tutmadim", callback_data: `fs:${date}:qoldi` }]] } }
+        : {};
+    res.preview?.push({ uid: Number(u.id), kind: `fast:${kind}`, text });
+    const ok = await send(Number(u.id), text, extra);
     if (ok) res.prayer++;
     else await release(Number(u.id), key);
   }

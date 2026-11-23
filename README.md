@@ -99,6 +99,17 @@ jadvali bilan bir xil, boshqa hududlarda ±2 daqiqa). Botdagi eslatmada «✅ O'
 Qazo hisoblagichi, ko'p kunlik qazoni bir yo'la qo'shish, kunlik maqsad. Buyruqlar: `/namoz`,
 `/namoz_on`, `/namoz_off`, `/kripto`.
 
+## Qo'shimcha bo'limlar
+
+- **To'lovlar** (Moliya): har oylik to'lovlar va obunalar; ertalabki xabarda muddatdan oldin eslatma; «To'ladim» xarajatga yozadi
+- **Limitlar** (Kirim-chiqim): kategoriya bo'yicha oylik limit; 80% va 100% da bot ogohlantiradi
+- **Zakot** (Moliya): naqd, dollar, oltin, tijorat moli, maqsadlar, kripto va qarzlardan hisob; nisob standart 100 mln so'm
+  (O'zbekiston musulmonlari idorasi, 2026) — o'zgartirsa bo'ladi
+- **Ro'za** (Ibodat): Ramazon taqvimi (saharlik/iftorlik), saharlik va iftorlik eslatmalari, «Ro'za tutdim» tugmasi,
+  nafl ro'za niyati, qazo ro'zalar. Ramazon sanasi hijriy taqvimdan taxminiy (O'zbekiston uchun 1 kun suriladi)
+- **Qur'on** (Ibodat): o'qilgan sahifalar, pora, xatm, kunlik maqsad, `/quron 5` buyrug'i
+- **Tug'ilgan kunlar** (Eslatmalar): bir kun oldin va o'sha kuni ertalabki xabarda
+
 ## Lokal ishga tushirish
 
 ```bash

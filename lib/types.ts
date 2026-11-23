@@ -107,6 +107,31 @@ export type Holding = {
 export type Qaza = { prayer: string; count: number; done_total: number };
 export type PrayerLog = { date: string; prayer: string };
 
+export type Bill = {
+  id: number;
+  name: string;
+  amount: number;
+  day: number;
+  category: string;
+  remind_days: number;
+  last_paid: string | null;
+  active: number;
+  note: string | null;
+};
+export type Budget = { category: string; amount: number };
+export type Birthday = { id: number; name: string; month: number; day: number; year: number | null; note: string | null };
+export type FastLog = { date: string; status: "niyat" | "tutdim" | "qoldi" };
+export type Zakat = {
+  cash_uzs: number;
+  cash_usd: number;
+  gold_g: number;
+  trade_uzs: number;
+  nisab_uzs: number;
+  include_goals: number;
+  include_crypto: number;
+  include_debts: number;
+};
+
 export type AllData = {
   goals: Goal[];
   debts: Debt[];
@@ -121,4 +146,11 @@ export type AllData = {
   holdings: Holding[];
   qaza: Qaza[];
   prayer_log: PrayerLog[];
+  bills: Bill[];
+  budgets: Budget[];
+  birthdays: Birthday[];
+  fast_log: FastLog[];
+  quran: { page: number; khatm: number };
+  quran_log: { date: string; pages: number }[];
+  zakat: Zakat | null;
 };

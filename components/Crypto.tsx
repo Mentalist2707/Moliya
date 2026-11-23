@@ -16,6 +16,7 @@ type Resp = {
   totalPct: number | null;
   usd_uzs: number | null;
   stale: boolean;
+  gold_usd_oz: number | null;
   presets: { coin: string; symbol: string; name: string }[];
 };
 

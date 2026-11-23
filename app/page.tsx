@@ -20,11 +20,11 @@ const NAV: { id: Tab; label: string; short: string; icon: keyof typeof I; color:
   { id: "vazifalar", label: "Vazifalar", short: "Vazifa", icon: "tasks", color: "var(--tasks)" },
   { id: "odatlar", label: "Odatlar", short: "Odat", icon: "habit", color: "var(--habit)", mobile: false },
   { id: "moliya", label: "Moliya", short: "Moliya", icon: "money", color: "var(--money)" },
-  { id: "namoz", label: "Namoz", short: "Namoz", icon: "mosque", color: "var(--habit)" },
+  { id: "namoz", label: "Ibodat", short: "Ibodat", icon: "mosque", color: "var(--habit)" },
   { id: "eslatmalar", label: "Eslatmalar", short: "Eslatma", icon: "notes", color: "var(--notes)" },
   { id: "kitoblar", label: "Kutubxona", short: "Kitob", icon: "books", color: "var(--books)" },
 ];
-const FIN_SUBS: FinSub[] = ["tx", "crypto", "debts", "goals", "buy"];
+const FIN_SUBS: FinSub[] = ["tx", "crypto", "bills", "debts", "goals", "buy", "zakat"];
 
 type TgWebApp = {
   ready: () => void;
@@ -58,6 +58,13 @@ const EMPTY: AllData = {
   holdings: [],
   qaza: [],
   prayer_log: [],
+  bills: [],
+  budgets: [],
+  birthdays: [],
+  fast_log: [],
+  quran: { page: 0, khatm: 0 },
+  quran_log: [],
+  zakat: null,
 };
 
 export default function Home() {
@@ -124,7 +131,7 @@ export default function Home() {
   const go = useCallback((t: Tab, sub?: string) => {
     setTab(t);
     if (t === "moliya" && sub && FIN_SUBS.includes(sub as FinSub)) setFin(sub as FinSub);
-    history.replaceState(null, "", "#" + t + (t === "moliya" && sub ? "-" + sub : ""));
+    history.replaceState(null, "", "#" + t + (sub ? "-" + sub : ""));
     window.scrollTo({ top: 0 });
   }, []);
 
@@ -205,7 +212,7 @@ export default function Home() {
             {data && tab === "vazifalar" && <Tasks />}
             {data && tab === "odatlar" && <Habits />}
             {data && tab === "moliya" && <Finance sub={fin} setSub={(s) => go("moliya", s)} />}
-            {data && tab === "namoz" && <Namoz openSettings={() => setSettings(true)} />}
+            {data && tab === "namoz" && <Namoz openSettings={() => setSettings(true)} quranGoal={me?.quran_goal ?? 0} />}
             {data && tab === "eslatmalar" && <Notes />}
             {data && tab === "kitoblar" && <Books />}
           </div>

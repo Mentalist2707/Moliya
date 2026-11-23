@@ -15,6 +15,17 @@ export const GET = withUser(async (req, uid) => {
   const me = await getUser(uid);
   const regionParam = u.searchParams.get("region");
   const region = regionParam && REGIONS.some((r) => r.name === regionParam) ? regionParam : me?.region || "Toshkent";
+  // ?days=N — sanadan boshlab N kunlik jadval (Ramazon taqvimi uchun, ko'pi bilan 31)
+  const days = Math.min(31, Number(u.searchParams.get("days") || 0));
+  if (days > 0) {
+    const list = [];
+    const start = Date.parse(date + "T00:00:00Z");
+    for (let i = 0; i < days; i++) {
+      const dd = new Date(start + i * 86400000).toISOString().slice(0, 10);
+      list.push({ date: dd, ...(await getDayTimes(region, dd)) });
+    }
+    return NextResponse.json({ region, list });
+  }
   const times = await getDayTimes(region, date);
   return NextResponse.json({ region, date, times, regions: REGIONS.map((r) => r.name) });
 });

@@ -13,6 +13,9 @@ import type { Tab } from "@/lib/nav";
 import { Avatar, type Me } from "./Settings";
 import { leftText, nextPrayer, PNAME, PrayerChecks, usePrayer } from "./Namoz";
 import { usd, usePortfolio } from "./Crypto";
+import { billStatus, hijri, nextBirthday } from "@/lib/calendar";
+import { BillRow } from "./Bills";
+import { bdayWhen } from "./Birthdays";
 
 type Quick = "task" | "chiqim" | "kirim" | "note" | "debt" | "book" | "daily" | null;
 
@@ -61,6 +64,17 @@ export default function Today({ go, me, openSettings }: { go: (t: Tab, sub?: str
   const nowMin = now.getHours() * 60 + now.getMinutes();
   const nx = prayer.data ? nextPrayer(prayer.data.times, nowMin) : null;
   const pf = usePortfolio(d.holdings.length > 0);
+  const dueBills = d.bills.filter((b) => {
+    if (!b.active) return false;
+    const st = billStatus(b, today);
+    return !st.paidThisMonth && st.left <= Math.max(3, b.remind_days);
+  });
+  const soonBdays = d.birthdays.map((b) => ({ b, n: nextBirthday(b, today) })).filter((x) => x.n.left <= 7).sort((a, b) => a.n.left - b.n.left);
+  const hj = hijri(today);
+  const fastSt = d.fast_log.find((f) => f.date.slice(0, 10) === today)?.status;
+  const fasting = (hj.month === 9 && fastSt !== "qoldi") || fastSt === "niyat";
+  const quranToday = d.quran_log.find((l) => l.date.slice(0, 10) === today)?.pages || 0;
+  const quranGoal = me?.quran_goal || 0;
 
   const R = 46;
   const C = 2 * Math.PI * R;
@@ -148,6 +162,50 @@ export default function Today({ go, me, openSettings }: { go: (t: Tab, sub?: str
           </span>
           <span style={{ fontSize: 13, color: "var(--muted)" }}>kechagidan · {pf.data.items.map((i) => i.symbol).join(", ")}</span>
         </button>
+      )}
+
+      {fasting && prayer.data && (
+        <button className="card" onClick={() => go("namoz", "roza")} style={{ border: 0, textAlign: "left", cursor: "pointer", font: "inherit", color: "var(--bg)", background: "var(--ink)", display: "grid", gap: 4 }}>
+          <span style={{ fontSize: 13, fontWeight: 700, opacity: 0.7 }}>🌙 {hj.month === 9 ? `Ramazonning ${hj.day}-kuni` : "Bugun nafl ro'za"}</span>
+          <span style={{ fontSize: 22, fontWeight: 800 }}>
+            Iftorlik <span className="num">{prayer.data.times.shom}</span>
+          </span>
+          <span style={{ fontSize: 13, opacity: 0.7 }}>Saharlik (og&apos;iz yopish): {prayer.data.times.bomdod}</span>
+        </button>
+      )}
+
+      {(dueBills.length > 0 || soonBdays.length > 0 || (quranGoal > 0 && quranToday < quranGoal)) && (
+        <div className="card flush" style={{ "--c": "var(--warn)" } as React.CSSProperties}>
+          <h2>Eslatib qo&apos;yaman</h2>
+          <div className="rows">
+            {dueBills.map((b) => (
+              <BillRow key={b.id} b={b} onOpen={() => go("moliya", "bills")} />
+            ))}
+            {soonBdays.map(({ b, n }) => (
+              <div key={"b" + b.id} className="row click" onClick={() => go("eslatmalar")}>
+                <div className="ico">🎂</div>
+                <div className="body">
+                  <span className="t">{b.name}</span>
+                  <span className="m">
+                    <span className={"pill " + (n.left === 0 ? "good" : "warn")}>{bdayWhen(n.left)}</span>
+                    {n.age ? <span>{n.age} yosh</span> : null}
+                  </span>
+                </div>
+              </div>
+            ))}
+            {quranGoal > 0 && quranToday < quranGoal && (
+              <div className="row click" onClick={() => go("namoz", "quron")}>
+                <div className="ico">📖</div>
+                <div className="body">
+                  <span className="t">Qur&apos;on: bugun {quranGoal - quranToday} sahifa qoldi</span>
+                  <span className="m">
+                    {quranToday}/{quranGoal} · xatm {Math.round((d.quran.page / 604) * 100)}%
+                  </span>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
       )}
 
       {prayer.data && nx && (

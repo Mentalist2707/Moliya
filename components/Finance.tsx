@@ -3,13 +3,16 @@
 import { useMemo, useState } from "react";
 import type { Debt, Goal, Payment, Purchase, Tx } from "@/lib/types";
 import { daysLeft, muddatLabel, OYLAR, sana, sanaNisbiy, som, somShort } from "@/lib/format";
-import { api, Bar, Check, Chips, Empty, MoreBtn, Seg, useStore, ActionMenu } from "./ui";
+import { api, Bar, Check, Chips, Empty, MoreBtn, Seg, useStore, ActionMenu, Sheet, MoneyInput, parseMoney, Foot } from "./ui";
+import { EXPENSE_CATS } from "@/lib/categories";
+import Bills from "./Bills";
+import Zakat from "./Zakat";
 import { DebtForm, GoalForm, PayForm, PurchaseForm, TxForm } from "./forms";
 import { I } from "./icons";
 
 import Crypto from "./Crypto";
 
-type Sub = "tx" | "crypto" | "debts" | "goals" | "buy";
+type Sub = "tx" | "crypto" | "bills" | "debts" | "goals" | "buy" | "zakat";
 
 export default function Finance({ sub, setSub }: { sub: Sub; setSub: (s: Sub) => void }) {
   return (
@@ -26,9 +29,11 @@ export default function Finance({ sub, setSub }: { sub: Sub; setSub: (s: Sub) =>
         options={[
           { v: "tx", t: "Kirim-chiqim" },
           { v: "crypto", t: "Kripto" },
+          { v: "bills", t: "To'lovlar" },
           { v: "debts", t: "Qarzlar" },
           { v: "goals", t: "Maqsadlar" },
           { v: "buy", t: "Xaridlar" },
+          { v: "zakat", t: "Zakot" },
         ]}
       />
       {sub === "tx" && <Transactions />}
@@ -36,6 +41,8 @@ export default function Finance({ sub, setSub }: { sub: Sub; setSub: (s: Sub) =>
       {sub === "debts" && <Debts />}
       {sub === "goals" && <Goals />}
       {sub === "buy" && <Purchases />}
+      {sub === "bills" && <Bills />}
+      {sub === "zakat" && <Zakat />}
     </>
   );
 }
@@ -53,12 +60,15 @@ function Transactions() {
   const income = month.filter((t) => t.type === "kirim").reduce((a, t) => a + t.amount, 0);
   const expense = month.filter((t) => t.type === "chiqim").reduce((a, t) => a + t.amount, 0);
 
+  const limits = useMemo(() => new Map(d.budgets.map((b) => [b.category, b.amount])), [d.budgets]);
   const byCat = useMemo(() => {
     const m = new Map<string, number>();
     for (const t of month) if (t.type === "chiqim") m.set(t.category, (m.get(t.category) || 0) + t.amount);
+    for (const c of limits.keys()) if (!m.has(c)) m.set(c, 0); // limiti bor, lekin hali xarajat yo'q
     return [...m.entries()].sort((a, b) => b[1] - a[1]);
-  }, [month]);
-  const maxCat = byCat[0]?.[1] || 1;
+  }, [month, limits]);
+  const maxCat = Math.max(1, ...byCat.map(([c, v]) => Math.max(v, limits.get(c) || 0)));
+  const [limitsOpen, setLimitsOpen] = useState(false);
 
   const shown = cat ? month.filter((t) => t.category === cat && t.type === "chiqim") : month;
   const days = useMemo(() => {
@@ -120,34 +130,53 @@ function Transactions() {
         </div>
       </div>
 
-      {byCat.length > 0 && (
-        <div className="card">
-          <h2>
-            Xarajatlar kategoriyalar bo&apos;yicha
-            {cat && (
-              <button className="link" onClick={() => setCat("")}>
-                Hammasi
-              </button>
-            )}
-          </h2>
+      <div className="card">
+        <h2>
+          Kategoriyalar va limitlar
+          {cat ? (
+            <button className="link" onClick={() => setCat("")}>
+              Hammasi
+            </button>
+          ) : (
+            <button className="link" onClick={() => setLimitsOpen(true)}>
+              Limitlar
+            </button>
+          )}
+        </h2>
+        {byCat.length === 0 ? (
+          <p style={{ margin: 0, color: "var(--muted)", fontSize: 14 }}>
+            Bu oyda xarajat yo&apos;q. Kategoriyalarga oylik limit qo&apos;ysangiz, 80% va 100% ga yetganda bot ogohlantiradi.
+          </p>
+        ) : (
           <div className="cats">
-            {byCat.map(([c, v]) => (
-              <button
-                key={c}
-                className="cat"
-                onClick={() => setCat(cat === c ? "" : c)}
-                style={{ border: 0, background: "none", padding: 0, textAlign: "left", opacity: cat && cat !== c ? 0.45 : 1 }}
-              >
-                <span style={{ fontWeight: 600 }}>{c}</span>
-                <span className="num">
-                  {som(v)} <span style={{ color: "var(--muted)" }}>· {Math.round((v / expense) * 100)}%</span>
-                </span>
-                <Bar pct={(v / maxCat) * 100} color="var(--bad)" />
-              </button>
-            ))}
+            {byCat.map(([c, v]) => {
+              const lim = limits.get(c);
+              const pct = lim ? (v / lim) * 100 : 0;
+              const col = lim ? (pct >= 100 ? "var(--bad)" : pct >= 80 ? "var(--warn)" : "var(--money)") : "var(--bad)";
+              return (
+                <button
+                  key={c}
+                  className="cat"
+                  onClick={() => setCat(cat === c ? "" : c)}
+                  style={{ border: 0, background: "none", padding: 0, textAlign: "left", opacity: cat && cat !== c ? 0.45 : 1 }}
+                >
+                  <span style={{ fontWeight: 600 }}>{c}</span>
+                  <span className="num">
+                    {som(v)}
+                    {lim ? (
+                      <span style={{ color: col, fontWeight: 700 }}> / {somShort(lim)} · {Math.round(pct)}%</span>
+                    ) : (
+                      expense > 0 && <span style={{ color: "var(--muted)" }}> · {Math.round((v / expense) * 100)}%</span>
+                    )}
+                  </span>
+                  <Bar pct={lim ? Math.min(100, pct) : (v / maxCat) * 100} color={col} />
+                </button>
+              );
+            })}
           </div>
-        </div>
-      )}
+        )}
+      </div>
+      {limitsOpen && <LimitsForm onClose={() => setLimitsOpen(false)} />}
 
       <div className="card flush">
         {days.length === 0 ? (
@@ -189,6 +218,46 @@ function Transactions() {
         <TxForm initial={typeof open === "object" ? open : undefined} type={typeof open === "string" ? open : undefined} onClose={() => setOpen(null)} />
       )}
     </>
+  );
+}
+
+/* ================= Byudjet limitlari ================= */
+function LimitsForm({ onClose }: { onClose: () => void }) {
+  const { d, act } = useStore();
+  const init = Object.fromEntries(d.budgets.map((b) => [b.category, som(b.amount)]));
+  const [vals, setVals] = useState<Record<string, string>>(init);
+  const [busy, setBusy] = useState(false);
+  return (
+    <Sheet title="Oylik limitlar" onClose={onClose}>
+      <form
+        className="form"
+        onSubmit={async (e) => {
+          e.preventDefault();
+          setBusy(true);
+          await act(async () => {
+            for (const c of EXPENSE_CATS) {
+              const nv = parseMoney(vals[c] || "");
+              const ov = parseMoney(init[c] || "");
+              if (nv !== ov) await api("/api/budget", "POST", { category: c, amount: nv });
+            }
+          }, "Limitlar saqlandi");
+          onClose();
+        }}
+      >
+        <p style={{ margin: 0, fontSize: 14, color: "var(--muted)" }}>Bo&apos;sh qoldirilsa — limit yo&apos;q. 80% va 100% ga yetganda bot xabar beradi.</p>
+        {EXPENSE_CATS.map((c) => (
+          <div key={c} className="two" style={{ alignItems: "center", gridTemplateColumns: "minmax(0,1fr) minmax(0,1.2fr)" }}>
+            <label htmlFor={`lim-${c}`} style={{ fontWeight: 600 }}>
+              {c}
+            </label>
+            <div className="field">
+              <MoneyInput id={`lim-${c}`} value={vals[c] || ""} onChange={(v) => setVals({ ...vals, [c]: v })} />
+            </div>
+          </div>
+        ))}
+        <Foot onClose={onClose} busy={busy} />
+      </form>
+    </Sheet>
   );
 }
 
