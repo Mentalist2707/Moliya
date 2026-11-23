@@ -209,7 +209,7 @@ export async function tick(appUrl: string, opts: { now?: number; fallback?: bool
     if (!(await claim(Number(u.id), key))) continue;
     const t = plan.times.get(u.region)!;
     const head = u.prayer_offset ? `⏰ ${u.prayer_offset} daqiqadan keyin <b>${PRAYER_NAMES[p]}</b> vaqti` : `🕌 <b>${PRAYER_NAMES[p]}</b> vaqti kirdi`;
-    const text = `${head} — ${t[p]}\n<i>${esc(u.region)}${t.source === "hisob" ? " (taxminiy vaqt)" : ""}</i>`;
+    const text = `${head} — ${t[p]}\n<i>${esc(u.region)}${t.source === "hisob" ? "" : ""}</i>`;
     res.preview?.push({ uid: Number(u.id), kind: `prayer:${p}`, text });
     const ok = await send(Number(u.id), text, { reply_markup: prayButton(date, p, appUrl) });
     if (ok) res.prayer++;

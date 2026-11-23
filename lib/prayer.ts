@@ -79,9 +79,9 @@ export function computeTimes(dateStr: string, lat: number, lng: number): Record<
   const h = {
     bomdod: noon - T(15),
     quyosh: noon - T(0.833),
-    peshin: noon + 3 / 60, // zenitdan biroz keyin
+    peshin: noon + 1 / 60, // zenitdan 1 daqiqa keyin (islom.uz jadvaliga moslangan)
     asr: noon + T(asrAngle),
-    shom: noon + T(0.833) + 2 / 60,
+    shom: noon + T(0.833),
     xufton: noon + T(15),
   };
   return Object.fromEntries(Object.entries(h).map(([k, v]) => [k, Math.round(v * 60)])) as Record<PrayerKey, number>;
@@ -166,8 +166,16 @@ export async function getDayTimes(region: string, date: string): Promise<DayTime
   } catch (e) {
     console.error("[prayer] islomapi xato:", (e as Error).message);
   }
-  // Zaxira: hisoblash (keshga yozmaymiz — keyingi safar API'ni yana sinaymiz)
+  // Zaxira: astronomik hisob (islom.uz jadvalidan ±2 daqiqa farq). Shu kun uchun keshlaymiz.
   const reg = REGIONS.find((r) => r.name === region) ?? REGIONS[0];
   const c2 = computeTimes(date, reg.lat, reg.lng);
-  return { ...(Object.fromEntries(PRAYER_KEYS.map((k) => [k, toHHMM(c2[k])])) as DayTimes), source: "hisob" };
+  const t = Object.fromEntries(PRAYER_KEYS.map((k) => [k, toHHMM(c2[k])])) as DayTimes;
+  await db
+    .query(
+      `INSERT INTO prayer_times (region, date, bomdod, quyosh, peshin, asr, shom, xufton, source)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'hisob') ON CONFLICT (region, date) DO NOTHING`,
+      [region, date, t.bomdod, t.quyosh, t.peshin, t.asr, t.shom, t.xufton]
+    )
+    .catch(() => {});
+  return { ...t, source: "hisob" };
 }

@@ -115,7 +115,7 @@ export default function Namoz({ openSettings }: { openSettings: () => void }) {
       <div className="ph">
         <div>
           <h1>Namoz</h1>
-          <p>{data ? `${data.region} · ${data.times.source === "hisob" ? "taxminiy vaqtlar" : "islom.uz"}` : "Yuklanmoqda…"}</p>
+          <p>{data ? `${data.region} · ${data.times.source === "hisob" ? "hisoblangan vaqt" : "islom.uz"}` : "Yuklanmoqda…"}</p>
         </div>
         <button className="btn sm soft" onClick={openSettings}>
           Eslatmalar

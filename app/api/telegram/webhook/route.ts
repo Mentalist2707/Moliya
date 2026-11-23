@@ -111,7 +111,7 @@ export async function POST(req: Request) {
       await tg("sendMessage", {
         chat_id: chat,
         parse_mode: "HTML",
-        text: `🕌 <b>${esc(region)}</b> — ${todayIn().split("-").reverse().join(".")}\n\n${lines.join("\n")}${t.source === "hisob" ? "\n\n<i>Taxminiy (islom.uz javob bermadi)</i>" : ""}\n\nEslatmalar: ${u?.prayer_remind ? "yoqilgan (/namoz_off)" : "o'chirilgan (/namoz_on)"}`,
+        text: `🕌 <b>${esc(region)}</b> — ${todayIn().split("-").reverse().join(".")}\n\n${lines.join("\n")}${t.source === "hisob" ? "\n\n<i>Hisoblangan vaqt (islom.uz bilan ±2 daqiqa)</i>" : ""}\n\nEslatmalar: ${u?.prayer_remind ? "yoqilgan (/namoz_off)" : "o'chirilgan (/namoz_on)"}`,
       });
     } else if (text.startsWith("/kripto")) {
       const c = await cryptoSection(uid);
