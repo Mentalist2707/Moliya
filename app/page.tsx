@@ -11,17 +11,20 @@ import Habits from "@/components/Habits";
 import Finance from "@/components/Finance";
 import Notes from "@/components/Notes";
 import Books from "@/components/Books";
+import Namoz from "@/components/Namoz";
 import Settings, { Avatar, type Me } from "@/components/Settings";
 
-const NAV: { id: Tab; label: string; short: string; icon: keyof typeof I; color: string }[] = [
+// mobile: false — telefonda pastki menyuda yo'q (Odatlar → Vazifalar ichida)
+const NAV: { id: Tab; label: string; short: string; icon: keyof typeof I; color: string; mobile?: false }[] = [
   { id: "bugun", label: "Bugun", short: "Bugun", icon: "today", color: "var(--brand)" },
   { id: "vazifalar", label: "Vazifalar", short: "Vazifa", icon: "tasks", color: "var(--tasks)" },
-  { id: "odatlar", label: "Odatlar", short: "Odat", icon: "habit", color: "var(--habit)" },
+  { id: "odatlar", label: "Odatlar", short: "Odat", icon: "habit", color: "var(--habit)", mobile: false },
   { id: "moliya", label: "Moliya", short: "Moliya", icon: "money", color: "var(--money)" },
+  { id: "namoz", label: "Namoz", short: "Namoz", icon: "mosque", color: "var(--habit)" },
   { id: "eslatmalar", label: "Eslatmalar", short: "Eslatma", icon: "notes", color: "var(--notes)" },
-  { id: "kitoblar", label: "Kitoblar", short: "Kitob", icon: "books", color: "var(--books)" },
+  { id: "kitoblar", label: "Kutubxona", short: "Kitob", icon: "books", color: "var(--books)" },
 ];
-const FIN_SUBS: FinSub[] = ["tx", "debts", "goals", "buy"];
+const FIN_SUBS: FinSub[] = ["tx", "crypto", "debts", "goals", "buy"];
 
 type TgWebApp = {
   ready: () => void;
@@ -41,7 +44,21 @@ function tgApp(): TgWebApp | null {
   return w && w.initData ? w : null;
 }
 
-const EMPTY: AllData = { goals: [], debts: [], purchases: [], payments: [], transactions: [], tasks: [], habits: [], habit_logs: [], notes: [], books: [] };
+const EMPTY: AllData = {
+  goals: [],
+  debts: [],
+  purchases: [],
+  payments: [],
+  transactions: [],
+  tasks: [],
+  habits: [],
+  habit_logs: [],
+  notes: [],
+  books: [],
+  holdings: [],
+  qaza: [],
+  prayer_log: [],
+};
 
 export default function Home() {
   const [data, setData] = useState<AllData | null>(null);
@@ -188,16 +205,22 @@ export default function Home() {
             {data && tab === "vazifalar" && <Tasks />}
             {data && tab === "odatlar" && <Habits />}
             {data && tab === "moliya" && <Finance sub={fin} setSub={(s) => go("moliya", s)} />}
+            {data && tab === "namoz" && <Namoz openSettings={() => setSettings(true)} />}
             {data && tab === "eslatmalar" && <Notes />}
             {data && tab === "kitoblar" && <Books />}
           </div>
         </main>
 
         <nav className="bottom" aria-label="Bo'limlar">
-          {NAV.map((n) => {
+          {NAV.filter((n) => n.mobile !== false).map((n) => {
             const Ic = I[n.icon];
             return (
-              <button key={n.id} aria-current={tab === n.id ? "page" : undefined} style={{ "--c": n.color } as React.CSSProperties} onClick={() => go(n.id)}>
+              <button
+                key={n.id}
+                aria-current={tab === n.id || (n.id === "vazifalar" && tab === "odatlar") ? "page" : undefined}
+                style={{ "--c": n.color } as React.CSSProperties}
+                onClick={() => go(n.id)}
+              >
                 <Ic />
                 {n.short}
               </button>

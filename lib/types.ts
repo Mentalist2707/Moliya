@@ -85,6 +85,7 @@ export type Book = {
   id: number;
   title: string;
   author: string | null;
+  genre: string | null;
   status: "reja" | "oqiyapman" | "oqidim";
   total_pages: number | null;
   current_page: number;
@@ -93,6 +94,18 @@ export type Book = {
   finished: string | null;
   note: string | null;
 };
+
+export type Holding = {
+  id: number;
+  coin: string;
+  symbol: string;
+  name: string | null;
+  amount: number;
+  avg_price: number | null;
+};
+
+export type Qaza = { prayer: string; count: number; done_total: number };
+export type PrayerLog = { date: string; prayer: string };
 
 export type AllData = {
   goals: Goal[];
@@ -105,4 +118,7 @@ export type AllData = {
   habit_logs: HabitLog[];
   notes: Note[];
   books: Book[];
+  holdings: Holding[];
+  qaza: Qaza[];
+  prayer_log: PrayerLog[];
 };

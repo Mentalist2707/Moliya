@@ -53,6 +53,13 @@ export const I = {
       <path d="M9 7h7" />
     </S>
   ),
+  mosque: (p: P) => (
+    <S {...p}>
+      <path d="M12 3c-3 2.5-5 4.3-5 7h10c0-2.7-2-4.5-5-7z" />
+      <path d="M5 21V12h14v9M3 21h18M10 21v-4a2 2 0 0 1 4 0v4" />
+      <path d="M12 3V1.5" />
+    </S>
+  ),
   plus: (p: P) => (
     <S {...p}>
       <path d="M12 5v14M5 12h14" />

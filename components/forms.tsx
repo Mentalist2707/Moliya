@@ -485,10 +485,14 @@ export function NoteEditor({ initial, onClose }: Base & { initial?: Note }) {
 }
 
 /* ---------------- Kitob ---------------- */
-export function BookForm({ initial, onClose }: Base & { initial?: Book }) {
+const GENRES = ["Badiiy", "Ilmiy", "Biznes", "Shaxsiy rivojlanish", "Diniy", "Tarix", "Biologiya", "Darslik", "She'riyat"];
+
+export function BookForm({ initial, onClose, defaultStatus }: Base & { initial?: Book; defaultStatus?: Book["status"] }) {
   const [title, setTitle] = useState(initial?.title ?? "");
   const [author, setAuthor] = useState(initial?.author ?? "");
-  const [status, setStatus] = useState<Book["status"]>(initial?.status ?? "reja");
+  const [genre, setGenre] = useState(initial?.genre ?? "");
+  const [status, setStatus] = useState<Book["status"]>(initial?.status ?? defaultStatus ?? "reja");
+  const [finished, setFinished] = useState(initial?.finished ?? (defaultStatus === "oqidim" ? todayStr() : ""));
   const [total, setTotal] = useState(initial?.total_pages ? String(initial.total_pages) : "");
   const [current, setCurrent] = useState(initial ? String(initial.current_page) : "");
   const [rating, setRating] = useState(initial?.rating ?? 0);
@@ -506,29 +510,47 @@ export function BookForm({ initial, onClose }: Base & { initial?: Book }) {
           const t = Number(total) || null;
           let cur = Number(current) || 0;
           if (status === "oqidim" && t) cur = t;
-          const b: Record<string, unknown> = { title: title.trim(), author, status, total_pages: t, current_page: cur, rating: rating || null, note };
+          const b: Record<string, unknown> = { title: title.trim(), author, genre: genre.trim() || null, status, total_pages: t, current_page: cur, rating: rating || null, note };
           if (status === "oqiyapman" && !initial?.started) b.started = todayStr();
-          if (status === "oqidim" && !initial?.finished) b.finished = todayStr();
-          if (status !== "oqidim") b.finished = null;
+          if (status === "oqidim") b.finished = finished || null;
+          else b.finished = null;
           run(b);
         }}
       >
         <Field label="Kitob nomi" htmlFor="b-title">
           <input id="b-title" data-autofocus required value={title} onChange={(e) => setTitle(e.target.value)} />
         </Field>
-        <Field label="Muallif" htmlFor="b-author">
-          <input id="b-author" value={author} onChange={(e) => setAuthor(e.target.value)} />
-        </Field>
+        <div className="two">
+          <Field label="Muallif" htmlFor="b-author">
+            <input id="b-author" value={author} onChange={(e) => setAuthor(e.target.value)} />
+          </Field>
+          <Field label="Janr" htmlFor="b-genre">
+            <input id="b-genre" list="genres" value={genre} onChange={(e) => setGenre(e.target.value)} placeholder="Masalan: Badiiy" />
+            <datalist id="genres">
+              {GENRES.map((g) => (
+                <option key={g} value={g} />
+              ))}
+            </datalist>
+          </Field>
+        </div>
         <Seg
           label="Holat"
           value={status}
-          onChange={setStatus}
+          onChange={(v) => {
+            setStatus(v);
+            if (v === "oqidim" && !finished) setFinished(todayStr());
+          }}
           options={[
             { v: "reja", t: "O'qimoqchiman" },
             { v: "oqiyapman", t: "O'qiyapman" },
             { v: "oqidim", t: "O'qidim" },
           ]}
         />
+        {status === "oqidim" && (
+          <Field label="Qachon o'qib tugatdingiz" htmlFor="b-fin" hint="Eski kitoblar uchun taxminiy sana ham bo'ladi — yil bo'yicha javonga joylashadi">
+            <input id="b-fin" type="date" value={finished} onChange={(e) => setFinished(e.target.value)} />
+          </Field>
+        )}
         <div className="two">
           <Field label="Jami bet" htmlFor="b-total">
             <input id="b-total" inputMode="numeric" value={total} onChange={(e) => setTotal(e.target.value.replace(/\D/g, ""))} />

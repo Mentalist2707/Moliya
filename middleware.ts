@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { AUTH_COOKIE, authEnabled, verifySession } from "@/lib/auth";
 
 // O'z tekshiruviga ega yoki ochiq bo'lishi kerak bo'lgan manzillar
-const PUBLIC = ["/login", "/api/tg-auth", "/api/auth/telegram", "/api/auth/logout", "/api/telegram/webhook", "/api/telegram/setup", "/api/cron/daily"];
+const PUBLIC = ["/login", "/api/tg-auth", "/api/auth/telegram", "/api/auth/logout", "/api/telegram/webhook", "/api/telegram/setup", "/api/cron/tick"];
 
 export async function middleware(req: NextRequest) {
   if (!authEnabled()) return NextResponse.next();

@@ -7,7 +7,9 @@ import { api, Bar, Check, Chips, Empty, MoreBtn, Seg, useStore, ActionMenu } fro
 import { DebtForm, GoalForm, PayForm, PurchaseForm, TxForm } from "./forms";
 import { I } from "./icons";
 
-type Sub = "tx" | "debts" | "goals" | "buy";
+import Crypto from "./Crypto";
+
+type Sub = "tx" | "crypto" | "debts" | "goals" | "buy";
 
 export default function Finance({ sub, setSub }: { sub: Sub; setSub: (s: Sub) => void }) {
   return (
@@ -23,12 +25,14 @@ export default function Finance({ sub, setSub }: { sub: Sub; setSub: (s: Sub) =>
         onChange={setSub}
         options={[
           { v: "tx", t: "Kirim-chiqim" },
+          { v: "crypto", t: "Kripto" },
           { v: "debts", t: "Qarzlar" },
           { v: "goals", t: "Maqsadlar" },
           { v: "buy", t: "Xaridlar" },
         ]}
       />
       {sub === "tx" && <Transactions />}
+      {sub === "crypto" && <Crypto />}
       {sub === "debts" && <Debts />}
       {sub === "goals" && <Goals />}
       {sub === "buy" && <Purchases />}

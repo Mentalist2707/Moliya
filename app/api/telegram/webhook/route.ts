@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
-import { insert, setDigest, upsertUser } from "@/lib/repo";
+import { getUser, insert, setDigest, setPrayed, updateSettings, upsertUser } from "@/lib/repo";
+import { getDayTimes, PRAYER_NAMES } from "@/lib/prayer";
+import { cryptoSection, invalidatePlan } from "@/lib/scheduler";
 import { isAllowed } from "@/lib/auth";
 import { parseQuickTx } from "@/lib/categories";
 import { appUrl, esc, openAppButton, som, tg, todayIn } from "@/lib/telegram";
@@ -18,9 +20,21 @@ Tez qo'shish uchun shunchaki yozing:
 <code>+3mln maosh</code> — kirim
 <code>Kitobni qaytarish</code> — yangi vazifa
 
-Har kuni ertalab qisqa reja yuboraman. O'chirish: /stop, yoqish: /digest`;
+Buyruqlar:
+/namoz — bugungi namoz vaqtlari
+/kripto — portfel, kechagidan foyda/zarar
+/stop, /digest — ertalabki xabarni o'chirish/yoqish
+/namoz_off, /namoz_on — namoz eslatmalari
+
+Sozlamalarning hammasi ilovada: avatar → Sozlamalar.`;
 
 type Update = {
+  callback_query?: {
+    id: string;
+    from: { id: number };
+    data?: string;
+    message?: { message_id: number; chat: { id: number }; text?: string };
+  };
   message?: {
     chat: { id: number; type: string };
     from?: { id: number; first_name?: string; last_name?: string; username?: string; is_bot?: boolean };
@@ -36,6 +50,23 @@ export async function POST(req: Request) {
   }
 
   const upd = (await req.json().catch(() => ({}))) as Update;
+
+  // Inline tugmalar: "✅ O'qidim" (pr:YYYY-MM-DD:namoz)
+  const cb = upd.callback_query;
+  if (cb) {
+    const m = (cb.data || "").match(/^pr:(\d{4}-\d{2}-\d{2}):(bomdod|peshin|asr|shom|xufton)$/);
+    if (m && isAllowed(cb.from.id)) {
+      await setPrayed(cb.from.id, m[1], m[2], true).catch((e) => console.error("[cb]", e));
+      await tg("answerCallbackQuery", { callback_query_id: cb.id, text: "Qabul bo'lsin! ✅" });
+      if (cb.message) {
+        await tg("editMessageReplyMarkup", { chat_id: cb.message.chat.id, message_id: cb.message.message_id, reply_markup: { inline_keyboard: [[{ text: "✅ O'qildi", callback_data: "noop" }]] } });
+      }
+    } else {
+      await tg("answerCallbackQuery", { callback_query_id: cb.id });
+    }
+    return NextResponse.json({ ok: true });
+  }
+
   const msg = upd.message;
   const from = msg?.from;
   // Faqat shaxsiy chatdagi matnli xabarlar
@@ -63,6 +94,33 @@ export async function POST(req: Request) {
     } else if (text.startsWith("/digest")) {
       await setDigest(uid, true);
       await tg("sendMessage", { chat_id: chat, text: "Ertalabki xabarlar yoqildi ☀️" });
+    } else if (text.startsWith("/namoz_off")) {
+      await updateSettings(uid, { prayer_remind: false });
+      invalidatePlan();
+      await tg("sendMessage", { chat_id: chat, text: "Namoz eslatmalari o'chirildi. Yoqish: /namoz_on" });
+    } else if (text.startsWith("/namoz_on")) {
+      await updateSettings(uid, { prayer_remind: true });
+      invalidatePlan();
+      const u = await getUser(uid);
+      await tg("sendMessage", { chat_id: chat, text: `Namoz eslatmalari yoqildi 🕌 (${u?.region}). Hududni ilovadagi Sozlamalarda o'zgartiring.` });
+    } else if (text.startsWith("/namoz")) {
+      const u = await getUser(uid);
+      const region = u?.region || "Toshkent";
+      const t = await getDayTimes(region, todayIn());
+      const lines = (["bomdod", "quyosh", "peshin", "asr", "shom", "xufton"] as const).map((k) => `${PRAYER_NAMES[k]}: <b>${t[k]}</b>`);
+      await tg("sendMessage", {
+        chat_id: chat,
+        parse_mode: "HTML",
+        text: `🕌 <b>${esc(region)}</b> — ${todayIn().split("-").reverse().join(".")}\n\n${lines.join("\n")}${t.source === "hisob" ? "\n\n<i>Taxminiy (islom.uz javob bermadi)</i>" : ""}\n\nEslatmalar: ${u?.prayer_remind ? "yoqilgan (/namoz_off)" : "o'chirilgan (/namoz_on)"}`,
+      });
+    } else if (text.startsWith("/kripto")) {
+      const c = await cryptoSection(uid);
+      await tg("sendMessage", {
+        chat_id: chat,
+        parse_mode: "HTML",
+        text: c ?? "Portfel bo'sh. Ilovada Moliya → Kripto bo'limida GRAM, BTC, XAUt va boshqalarni qo'shing.",
+        reply_markup: openAppButton(url + "/#moliya-crypto", "💰 Portfelni ochish"),
+      });
     } else if (text.startsWith("/")) {
       await tg("sendMessage", { chat_id: chat, text: "Noma'lum buyruq. /start", reply_markup: openAppButton(url) });
     } else {

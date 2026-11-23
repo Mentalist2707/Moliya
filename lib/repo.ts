@@ -11,7 +11,8 @@ export const TABLES = {
   tasks: ["title", "note", "due_date", "priority", "done"],
   habits: ["name", "kind", "emoji", "archived"],
   notes: ["title", "body", "pinned", "color"],
-  books: ["title", "author", "status", "total_pages", "current_page", "rating", "started", "finished", "note"],
+  books: ["title", "author", "genre", "status", "total_pages", "current_page", "rating", "started", "finished", "note"],
+  holdings: ["coin", "symbol", "name", "amount", "avg_price"],
 } as const;
 
 export type TableName = keyof typeof TABLES;
@@ -20,7 +21,7 @@ export function isTable(t: string): t is TableName {
   return Object.prototype.hasOwnProperty.call(TABLES, t);
 }
 
-const NUM = new Set(["target", "saved", "amount", "paid", "price", "total_pages", "current_page", "rating"]);
+const NUM = new Set(["target", "saved", "amount", "paid", "price", "total_pages", "current_page", "rating", "avg_price"]);
 
 function pick(table: TableName, body: Record<string, unknown>) {
   const out: Record<string, unknown> = {};
@@ -29,7 +30,11 @@ function pick(table: TableName, body: Record<string, unknown>) {
       let v = body[col];
       if (v === "") v = null;
       if (typeof v === "boolean") v = v ? 1 : 0;
-      if (NUM.has(col) && v !== null) v = Math.round(Number(v) || 0);
+      if (NUM.has(col) && v !== null) {
+        // Kripto miqdori va narxi kasr bo'ladi — yaxlitlamaymiz
+        v = table === "holdings" ? Number(v) || 0 : Math.round(Number(v) || 0);
+        if (table === "holdings" && (!Number.isFinite(v as number) || (v as number) < 0)) throw new Error("Noto'g'ri miqdor");
+      }
       out[col] = v;
     }
   }
@@ -44,7 +49,7 @@ function clean<T extends Record<string, unknown>>(rows: T[]): T[] {
 export async function getAll(uid: number): Promise<AllData> {
   const db = await getDb();
   const q = (sql: string) => db.query(sql, [uid]).then((r) => clean(r.rows));
-  const [goals, debts, purchases, payments, transactions, tasks, habits, habit_logs, notes, books] = await Promise.all([
+  const [goals, debts, purchases, payments, transactions, tasks, habits, habit_logs, notes, books, holdings, qaza, prayer_log] = await Promise.all([
     q(`SELECT * FROM goals WHERE user_id=$1 ORDER BY deadline NULLS LAST, id DESC`),
     q(`SELECT * FROM debts WHERE user_id=$1 ORDER BY due_date NULLS LAST, id DESC`),
     q(`SELECT * FROM purchases WHERE user_id=$1 ORDER BY bought, planned_date NULLS LAST, id DESC`),
@@ -54,9 +59,12 @@ export async function getAll(uid: number): Promise<AllData> {
     q(`SELECT * FROM habits WHERE user_id=$1 ORDER BY id`),
     q(`SELECT * FROM habit_logs WHERE user_id=$1 AND date >= CURRENT_DATE - 400`),
     q(`SELECT * FROM notes WHERE user_id=$1 ORDER BY pinned DESC, updated_at DESC`),
-    q(`SELECT * FROM books WHERE user_id=$1 ORDER BY CASE status WHEN 'oqiyapman' THEN 0 WHEN 'reja' THEN 1 ELSE 2 END, id DESC`),
+    q(`SELECT * FROM books WHERE user_id=$1 ORDER BY CASE status WHEN 'oqiyapman' THEN 0 WHEN 'reja' THEN 1 ELSE 2 END, finished DESC NULLS LAST, id DESC`),
+    q(`SELECT * FROM holdings WHERE user_id=$1 ORDER BY id`),
+    q(`SELECT prayer, count, done_total FROM qaza WHERE user_id=$1`),
+    q(`SELECT date, prayer FROM prayer_log WHERE user_id=$1 AND date >= CURRENT_DATE - 7`),
   ]);
-  return { goals, debts, purchases, payments, transactions, tasks, habits, habit_logs, notes, books } as unknown as AllData;
+  return { goals, debts, purchases, payments, transactions, tasks, habits, habit_logs, notes, books, holdings, qaza, prayer_log } as unknown as AllData;
 }
 
 export async function insert(uid: number, table: TableName, body: Record<string, unknown>) {
@@ -157,7 +165,17 @@ export type User = {
   username: string | null;
   photo_url: string | null;
   daily_digest: number;
+  morning_time: string;
+  crypto_report: number;
+  region: string;
+  prayer_remind: number;
+  prayer_offset: number;
+  prayer_list: string;
+  qaza_remind: number;
+  qaza_goal: number;
 };
+
+const USER_COLS = "id, first_name, last_name, username, photo_url, daily_digest, morning_time, crypto_report, region, prayer_remind, prayer_offset, prayer_list, qaza_remind, qaza_goal";
 
 export async function upsertUser(u: { id: number; first_name?: string; last_name?: string; username?: string; photo_url?: string }) {
   const db = await getDb();
@@ -169,7 +187,7 @@ export async function upsertUser(u: { id: number; first_name?: string; last_name
        username = COALESCE(EXCLUDED.username, users.username),
        photo_url = COALESCE(EXCLUDED.photo_url, users.photo_url),
        last_seen = now()
-     RETURNING id, first_name, last_name, username, photo_url, daily_digest`,
+     RETURNING ${USER_COLS}`,
     [u.id, u.first_name ?? null, u.last_name ?? null, u.username ?? null, u.photo_url ?? null]
   );
   return r.rows[0] as User;
@@ -177,7 +195,7 @@ export async function upsertUser(u: { id: number; first_name?: string; last_name
 
 export async function getUser(uid: number): Promise<User | null> {
   const db = await getDb();
-  const r = await db.query("SELECT id, first_name, last_name, username, photo_url, daily_digest FROM users WHERE id=$1", [uid]);
+  const r = await db.query(`SELECT ${USER_COLS} FROM users WHERE id=$1`, [uid]);
   return (r.rows[0] as User) ?? null;
 }
 
@@ -189,8 +207,62 @@ export async function setDigest(uid: number, on: boolean) {
 // Foydalanuvchining barcha ma'lumotlarini o'chirish (hisobni o'chirish)
 export async function deleteAccount(uid: number) {
   await tx(async (q) => {
-    for (const t of ["habit_logs", "payments", "goals", "debts", "purchases", "transactions", "tasks", "habits", "notes", "books"])
+    for (const t of ["habit_logs", "payments", "goals", "debts", "purchases", "transactions", "tasks", "habits", "notes", "books", "holdings", "qaza", "prayer_log", "sent_log"])
       await q(`DELETE FROM ${t} WHERE user_id=$1`, [uid]);
     await q("DELETE FROM users WHERE id=$1", [uid]);
   });
+}
+
+/** Sozlamalarni yangilash — faqat ruxsat etilgan maydonlar, tekshiruv bilan */
+export async function updateSettings(uid: number, b: Record<string, unknown>) {
+  const sets: string[] = [];
+  const vals: unknown[] = [];
+  const put = (col: string, v: unknown) => {
+    vals.push(v);
+    sets.push(`${col}=$${vals.length}`);
+  };
+  const bool = (k: string) => typeof b[k] === "boolean" && put(k, b[k] ? 1 : 0);
+  bool("daily_digest");
+  bool("crypto_report");
+  bool("prayer_remind");
+  bool("qaza_remind");
+  if (typeof b.morning_time === "string" && /^([01]\d|2[0-3]):(00|30)$/.test(b.morning_time)) put("morning_time", b.morning_time);
+  if (typeof b.region === "string" && b.region.length < 40) put("region", b.region);
+  if ([0, 5, 10, 15].includes(Number(b.prayer_offset))) put("prayer_offset", Number(b.prayer_offset));
+  if (typeof b.prayer_list === "string") {
+    const ok = b.prayer_list.split(",").filter((x) => ["bomdod", "peshin", "asr", "shom", "xufton"].includes(x));
+    put("prayer_list", ok.join(","));
+  }
+  if (Number.isInteger(Number(b.qaza_goal)) && Number(b.qaza_goal) >= 0 && Number(b.qaza_goal) <= 50) put("qaza_goal", Number(b.qaza_goal));
+  if (!sets.length) return;
+  vals.push(uid);
+  const db = await getDb();
+  await db.query(`UPDATE users SET ${sets.join(",")} WHERE id=$${vals.length}`, vals);
+}
+
+/* ---------- Namoz va qazo ---------- */
+export const PRAYERS = ["bomdod", "peshin", "asr", "shom", "xufton"] as const;
+export const QAZA_KINDS = ["bomdod", "peshin", "asr", "shom", "xufton", "vitr"] as const;
+
+export async function setPrayed(uid: number, date: string, prayer: string, on: boolean) {
+  if (!(PRAYERS as readonly string[]).includes(prayer)) throw new Error("Noto'g'ri namoz");
+  const db = await getDb();
+  if (on) await db.query("INSERT INTO prayer_log (user_id, date, prayer) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING", [uid, date, prayer]);
+  else await db.query("DELETE FROM prayer_log WHERE user_id=$1 AND date=$2 AND prayer=$3", [uid, date, prayer]);
+}
+
+/** delta>0 — qazo qo'shildi, delta<0 — qazo o'qildi (done_total oshadi) */
+export async function changeQaza(uid: number, prayer: string, delta: number) {
+  if (!(QAZA_KINDS as readonly string[]).includes(prayer)) throw new Error("Noto'g'ri namoz");
+  const d = Math.max(-1000, Math.min(10000, Math.trunc(delta)));
+  const db = await getDb();
+  const r = await db.query(
+    `INSERT INTO qaza (user_id, prayer, count, done_total) VALUES ($1,$2,GREATEST(0,$3),0)
+     ON CONFLICT (user_id, prayer) DO UPDATE SET
+       done_total = qaza.done_total + CASE WHEN $3 < 0 THEN LEAST(-$3, qaza.count) ELSE 0 END,
+       count = GREATEST(0, qaza.count + $3)
+     RETURNING prayer, count, done_total`,
+    [uid, prayer, d]
+  );
+  return r.rows[0];
 }

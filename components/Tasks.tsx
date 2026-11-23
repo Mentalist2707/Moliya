@@ -6,6 +6,7 @@ import { daysLeft, muddatLabel, sana, todayStr } from "@/lib/format";
 import { api, Bar, Check, Chips, Empty, Seg, useStore } from "./ui";
 import { HabitForm, TaskForm } from "./forms";
 import { I } from "./icons";
+import Habits from "./Habits";
 
 type Filter = "faol" | "bugun" | "bajarilgan";
 
@@ -82,7 +83,7 @@ export function HabitCheckRow({ h, on, onOpen }: { h: Habit; on: boolean; onOpen
 
 export default function Tasks() {
   const { d, act } = useStore();
-  const [seg, setSeg] = useState<"todo" | "daily">("todo");
+  const [seg, setSeg] = useState<"todo" | "daily" | "habits">("todo");
   const [filter, setFilter] = useState<Filter>("faol");
   const [quick, setQuick] = useState("");
   const [open, setOpen] = useState<Task | "new" | null>(null);
@@ -113,9 +114,11 @@ export default function Tasks() {
         onChange={setSeg}
         options={[
           { v: "todo", t: "To-do" },
-          { v: "daily", t: "Kunlik vazifalar" },
+          { v: "daily", t: "Kunlik" },
+          { v: "habits", t: "Odatlar" },
         ]}
       />
+      {seg === "habits" && <Habits embedded />}
 
       {seg === "todo" && (
         <>
@@ -205,9 +208,11 @@ export default function Tasks() {
         </div>
       )}
 
-      <button className="fab" aria-label="Qo'shish" onClick={() => (seg === "todo" ? setOpen("new") : setHOpen("new"))}>
-        <I.plus />
-      </button>
+      {seg !== "habits" && (
+        <button className="fab" aria-label="Qo'shish" onClick={() => (seg === "todo" ? setOpen("new") : setHOpen("new"))}>
+          <I.plus />
+        </button>
+      )}
       {open && <TaskForm initial={open === "new" ? undefined : open} defaultDue={filter === "bugun" ? today : undefined} onClose={() => setOpen(null)} />}
       {hOpen && <HabitForm kind="daily" initial={hOpen === "new" ? undefined : hOpen} onClose={() => setHOpen(null)} />}
     </>

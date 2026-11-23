@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { deleteAccount, getUser, setDigest } from "@/lib/repo";
+import { deleteAccount, getUser, updateSettings } from "@/lib/repo";
+import { invalidatePlan } from "@/lib/scheduler";
 import { withUser } from "@/lib/api";
 import { AUTH_COOKIE, COOKIE_OPTS, authEnabled } from "@/lib/auth";
 
@@ -13,14 +14,23 @@ export const GET = withUser(async (_req, uid) => {
     username: u?.username ?? null,
     photo_url: u?.photo_url ?? null,
     daily_digest: u?.daily_digest ?? 1,
+    morning_time: u?.morning_time ?? "08:30",
+    crypto_report: u?.crypto_report ?? 1,
+    region: u?.region ?? "Toshkent",
+    prayer_remind: u?.prayer_remind ?? 0,
+    prayer_offset: u?.prayer_offset ?? 0,
+    prayer_list: u?.prayer_list ?? "bomdod,peshin,asr,shom,xufton",
+    qaza_remind: u?.qaza_remind ?? 1,
+    qaza_goal: u?.qaza_goal ?? 0,
     local: !authEnabled(),
   });
 });
 
-// PATCH { daily_digest: boolean }
+// PATCH { daily_digest?, morning_time?, crypto_report?, region?, prayer_remind?, prayer_offset?, prayer_list?, qaza_remind?, qaza_goal? }
 export const PATCH = withUser(async (req, uid) => {
   const b = await req.json().catch(() => ({}));
-  if (typeof b.daily_digest === "boolean") await setDigest(uid, b.daily_digest);
+  if (b && typeof b === "object") await updateSettings(uid, b);
+  invalidatePlan();
   return NextResponse.json({ ok: true });
 });
 

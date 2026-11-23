@@ -8,7 +8,7 @@ import { api, Empty, MoreBtn, useStore } from "./ui";
 import { HabitForm } from "./forms";
 import { I } from "./icons";
 
-export default function Habits() {
+export default function Habits({ embedded }: { embedded?: boolean } = {}) {
   const { d, act, haptic } = useStore();
   const [open, setOpen] = useState<Habit | "new" | null>(null);
   const habits = d.habits.filter((h) => h.kind === "habit" && !h.archived);
@@ -18,7 +18,7 @@ export default function Habits() {
 
   return (
     <>
-      <div className="ph">
+      <div className="ph" style={embedded ? { display: "none" } : undefined}>
         <div>
           <h1>Odatlar</h1>
           <p>

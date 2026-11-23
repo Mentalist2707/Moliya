@@ -11,6 +11,8 @@ import { BookCover } from "./Books";
 import { I } from "./icons";
 import type { Tab } from "@/lib/nav";
 import { Avatar, type Me } from "./Settings";
+import { leftText, nextPrayer, PNAME, PrayerChecks, usePrayer } from "./Namoz";
+import { usd, usePortfolio } from "./Crypto";
 
 type Quick = "task" | "chiqim" | "kirim" | "note" | "debt" | "book" | "daily" | null;
 
@@ -54,6 +56,11 @@ export default function Today({ go, me, openSettings }: { go: (t: Tab, sub?: str
 
   const reading = d.books.filter((b) => b.status === "oqiyapman").slice(0, 2);
   const pinned = d.notes.filter((n) => n.pinned).slice(0, 2);
+
+  const prayer = usePrayer(today);
+  const nowMin = now.getHours() * 60 + now.getMinutes();
+  const nx = prayer.data ? nextPrayer(prayer.data.times, nowMin) : null;
+  const pf = usePortfolio(d.holdings.length > 0);
 
   const R = 46;
   const C = 2 * Math.PI * R;
@@ -125,6 +132,38 @@ export default function Today({ go, me, openSettings }: { go: (t: Tab, sub?: str
           <span className="s">{todays.filter((t) => !t.done).length} tasi bugun</span>
         </button>
       </div>
+
+      {pf.data && pf.data.items.length > 0 && (
+        <button className="card" onClick={() => go("moliya", "crypto")} style={{ border: 0, textAlign: "left", display: "grid", gap: 4, cursor: "pointer", font: "inherit", color: "inherit" }}>
+          <span style={{ fontSize: 13, fontWeight: 700, color: "var(--muted)" }}>💰 Kripto portfel</span>
+          <span style={{ display: "flex", alignItems: "baseline", gap: 12, flexWrap: "wrap" }}>
+            <span className="num" style={{ fontSize: 26, fontWeight: 800, letterSpacing: "-0.02em" }}>
+              {usd(pf.data.value, 2)}
+            </span>
+            <span className="num" style={{ fontWeight: 800, color: pf.data.dayPnl >= 0 ? "var(--money)" : "var(--bad)" }}>
+              {pf.data.dayPnl >= 0 ? "+" : ""}
+              {usd(pf.data.dayPnl)} ({pf.data.dayPct >= 0 ? "+" : ""}
+              {pf.data.dayPct.toFixed(2)}%)
+            </span>
+          </span>
+          <span style={{ fontSize: 13, color: "var(--muted)" }}>kechagidan · {pf.data.items.map((i) => i.symbol).join(", ")}</span>
+        </button>
+      )}
+
+      {prayer.data && nx && (
+        <div className="card flush" style={{ "--c": "var(--habit)" } as React.CSSProperties}>
+          <h2>
+            <span>
+              🕌 {PNAME[nx.key]} <span className="num">{nx.at}</span>
+              <span style={{ fontSize: 13, fontWeight: 600, color: "var(--muted)", marginLeft: 8 }}>{leftText(nx.left)} qoldi</span>
+            </span>
+            <button className="link" onClick={() => go("namoz")}>
+              Namoz
+            </button>
+          </h2>
+          <PrayerChecks date={today} compact />
+        </div>
+      )}
 
       <div className="card flush" style={{ "--c": "var(--tasks)" } as React.CSSProperties}>
         <h2>

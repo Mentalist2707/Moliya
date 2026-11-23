@@ -144,9 +144,79 @@ const MIGRATE = `
   ).join("\n  ")}
 `;
 
+// 3-bosqich: kripto portfel, namoz, qazo, rejalashtiruvchi
+const MIGRATE_V3 = `
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS morning_time TEXT NOT NULL DEFAULT '08:30';
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS crypto_report SMALLINT NOT NULL DEFAULT 1;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS region TEXT NOT NULL DEFAULT 'Toshkent';
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS prayer_remind SMALLINT NOT NULL DEFAULT 0;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS prayer_offset SMALLINT NOT NULL DEFAULT 0;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS prayer_list TEXT NOT NULL DEFAULT 'bomdod,peshin,asr,shom,xufton';
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS qaza_remind SMALLINT NOT NULL DEFAULT 1;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS qaza_goal SMALLINT NOT NULL DEFAULT 0;
+  ALTER TABLE books ADD COLUMN IF NOT EXISTS genre TEXT;
+
+  -- Kripto / oltin aktivlari. coin = CoinGecko ID
+  CREATE TABLE IF NOT EXISTS holdings (
+    id SERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL,
+    coin TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    name TEXT,
+    amount DOUBLE PRECISION NOT NULL DEFAULT 0,
+    avg_price DOUBLE PRECISION,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  );
+  CREATE INDEX IF NOT EXISTS idx_holdings_user ON holdings(user_id);
+
+  -- Narxlar keshi (USD). Maxsus kalit: 'usd_uzs' — Markaziy bank kursi
+  CREATE TABLE IF NOT EXISTS prices_cache (
+    coin TEXT PRIMARY KEY,
+    usd DOUBLE PRECISION NOT NULL,
+    change24 DOUBLE PRECISION,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  );
+
+  -- Namoz vaqtlari keshi (islom.uz ma'lumoti), hudud + sana
+  CREATE TABLE IF NOT EXISTS prayer_times (
+    region TEXT NOT NULL,
+    date DATE NOT NULL,
+    bomdod TEXT NOT NULL, quyosh TEXT NOT NULL, peshin TEXT NOT NULL,
+    asr TEXT NOT NULL, shom TEXT NOT NULL, xufton TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT 'islomapi',
+    PRIMARY KEY (region, date)
+  );
+
+  -- O'qilgan namozlar belgisi
+  CREATE TABLE IF NOT EXISTS prayer_log (
+    user_id BIGINT NOT NULL,
+    date DATE NOT NULL,
+    prayer TEXT NOT NULL,
+    PRIMARY KEY (user_id, date, prayer)
+  );
+
+  -- Qazo namozlar hisobi
+  CREATE TABLE IF NOT EXISTS qaza (
+    user_id BIGINT NOT NULL,
+    prayer TEXT NOT NULL,
+    count INTEGER NOT NULL DEFAULT 0,
+    done_total INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (user_id, prayer)
+  );
+
+  -- Yuborilgan xabarlar (bir xabar ikki marta ketmasligi uchun)
+  CREATE TABLE IF NOT EXISTS sent_log (
+    user_id BIGINT NOT NULL,
+    key TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (user_id, key)
+  );
+`;
+
 async function migrate(p: Pool) {
   await p.query(SCHEMA);
   await p.query(MIGRATE);
+  await p.query(MIGRATE_V3);
   // Avvalgi (bir kishilik) versiyadagi ma'lumotlarni egasiga biriktirish
   const owner = Number(process.env.TELEGRAM_OWNER_ID || 0);
   if (owner) {
