@@ -3,9 +3,12 @@
 export const AUTH_COOKIE = "moliya_sess";
 const DAYS = 60;
 
-/** TELEGRAM_BOT_TOKEN yo'q bo'lsa — lokal rejim: login yo'q, bitta foydalanuvchi (id=1) */
+/**
+ * TELEGRAM_BOT_TOKEN yo'q bo'lsa — lokal rejim: login yo'q, bitta foydalanuvchi (id=1).
+ * Vercel'da (VERCEL=1) lokal rejim HECH QACHON yoqilmaydi: token bo'lmasa hech kim kira olmaydi.
+ */
 export function authEnabled(): boolean {
-  return !!process.env.TELEGRAM_BOT_TOKEN;
+  return !!process.env.TELEGRAM_BOT_TOKEN || !!process.env.VERCEL;
 }
 export const LOCAL_UID = 1;
 
