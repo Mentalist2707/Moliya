@@ -65,6 +65,8 @@ const EMPTY: AllData = {
   quran: { page: 0, khatm: 0 },
   quran_log: [],
   zakat: null,
+  qaza_log: [],
+  tracking_since: null,
 };
 
 export default function Home() {

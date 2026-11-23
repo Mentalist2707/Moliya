@@ -153,15 +153,27 @@ export async function cryptoSection(uid: number): Promise<string | null> {
   return L.join("\n");
 }
 
-async function qazaSection(uid: number, goal: number): Promise<string | null> {
+async function qazaSection(uid: number, goal: number, date?: string): Promise<string | null> {
   const db = await getDb();
+  // Kecha belgilanmay qolgan namozlar (foydalanuvchi belgilashdan foydalanayotgan bo'lsa)
+  let missedLine = "";
+  if (date) {
+    const used = (await db.query("SELECT 1 FROM prayer_log WHERE user_id=$1 AND date >= $2::date - 7 LIMIT 1", [uid, date])).rowCount;
+    if (used) {
+      const marked = new Set(
+        (await db.query("SELECT prayer FROM prayer_log WHERE user_id=$1 AND date = $2::date - 1", [uid, date])).rows.map((r) => r.prayer as string)
+      );
+      const missed = ["bomdod", "peshin", "asr", "shom", "xufton"].filter((p) => !marked.has(p));
+      if (missed.length) missedLine = `\n⚠️ Kecha belgilanmagan: ${missed.map((p) => PRAYER_NAMES[p as PrayerKey]).join(", ")} — ilovada «o'qidim» yoki «qazo» deb belgilang`;
+    }
+  }
   const rows = (await db.query("SELECT prayer, count FROM qaza WHERE user_id=$1 AND count > 0", [uid])).rows as { prayer: string; count: number }[];
-  if (!rows.length) return null;
+  if (!rows.length) return missedLine ? `<b>🕋 Namozlar</b>${missedLine}` : null;
   const total = rows.reduce((a, r) => a + r.count, 0);
   const order = ["bomdod", "peshin", "asr", "shom", "xufton", "vitr"];
   rows.sort((a, b) => order.indexOf(a.prayer) - order.indexOf(b.prayer));
-  const names: Record<string, string> = { ...PRAYER_NAMES, vitr: "Vitr" };
-  return `<b>🕋 Qazo namozlar: ${total} ta</b>\n${rows.map((r) => `${names[r.prayer] ?? r.prayer}: ${r.count}`).join(" · ")}${goal ? `\nBugungi maqsad: ${goal} ta qazo o'qish` : ""}`;
+  const names: Record<string, string> = { ...PRAYER_NAMES, vitr: "Vitr", roza: "Ro'za" };
+  return `<b>🕋 Qazo namozlar: ${total} ta</b>\n${rows.map((r) => `${names[r.prayer] ?? r.prayer}: ${r.count}`).join(" · ")}${goal ? `\nBugungi maqsad: ${goal} ta qazo o'qish` : ""}${missedLine}`;
 }
 
 /** To'lovlar, tug'ilgan kunlar, Qur'on, ro'za */
@@ -222,7 +234,7 @@ export async function buildMorning(u: User, date: string): Promise<string | null
     );
   }
   if (u.qaza_remind) {
-    const q = await qazaSection(Number(u.id), u.qaza_goal);
+    const q = await qazaSection(Number(u.id), u.qaza_goal, date);
     if (q) parts.push(q);
   }
   const extra = await extrasSection(u, date).catch((e) => (console.error("[morning] extras:", e), null));

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { withUser } from "@/lib/api";
-import { getUser, setPrayed } from "@/lib/repo";
+import { bulkMissedToQaza, getUser, setPrayerStatus } from "@/lib/repo";
 import { getDayTimes, REGIONS } from "@/lib/prayer";
 
 export const dynamic = "force-dynamic";
@@ -30,10 +30,18 @@ export const GET = withUser(async (req, uid) => {
   return NextResponse.json({ region, date, times, regions: REGIONS.map((r) => r.name) });
 });
 
-// POST { date, prayer, on } → o'qildi belgisi
+// POST { date, prayer, status: 'oqildi'|'qazo'|null }  (eski: { date, prayer, on })
+// POST { bulk_qaza: true, from, to } → oraliqdagi belgilanmagan namozlarni qazoga yozish
 export const POST = withUser(async (req, uid) => {
   const b = await req.json().catch(() => ({}));
+  if (b.bulk_qaza) {
+    if (!isDate(b.from) || !isDate(b.to) || b.from > b.to) return NextResponse.json({ error: "from/to kerak" }, { status: 400 });
+    const span = (Date.parse(b.to) - Date.parse(b.from)) / 86400000;
+    if (span > 400) return NextResponse.json({ error: "Oraliq juda katta" }, { status: 400 });
+    return NextResponse.json({ added: await bulkMissedToQaza(uid, b.from, b.to) });
+  }
   if (!isDate(b.date)) return NextResponse.json({ error: "date kerak" }, { status: 400 });
-  await setPrayed(uid, b.date, String(b.prayer), !!b.on);
+  const status = "status" in b ? (b.status === "oqildi" || b.status === "qazo" ? b.status : null) : b.on ? "oqildi" : null;
+  await setPrayerStatus(uid, b.date, String(b.prayer), status);
   return NextResponse.json({ ok: true });
 });

@@ -51,7 +51,7 @@ function clean<T extends Record<string, unknown>>(rows: T[]): T[] {
 export async function getAll(uid: number): Promise<AllData> {
   const db = await getDb();
   const q = (sql: string) => db.query(sql, [uid]).then((r) => clean(r.rows));
-  const [goals, debts, purchases, payments, transactions, tasks, habits, habit_logs, notes, books, holdings, qaza, prayer_log, bills, budgets, birthdays, fast_log, quranRows, quran_log, zakatRows] = await Promise.all([
+  const [goals, debts, purchases, payments, transactions, tasks, habits, habit_logs, notes, books, holdings, qaza, prayer_log, bills, budgets, birthdays, fast_log, quranRows, quran_log, zakatRows, qaza_log, since] = await Promise.all([
     q(`SELECT * FROM goals WHERE user_id=$1 ORDER BY deadline NULLS LAST, id DESC`),
     q(`SELECT * FROM debts WHERE user_id=$1 ORDER BY due_date NULLS LAST, id DESC`),
     q(`SELECT * FROM purchases WHERE user_id=$1 ORDER BY bought, planned_date NULLS LAST, id DESC`),
@@ -64,7 +64,7 @@ export async function getAll(uid: number): Promise<AllData> {
     q(`SELECT * FROM books WHERE user_id=$1 ORDER BY CASE status WHEN 'oqiyapman' THEN 0 WHEN 'reja' THEN 1 ELSE 2 END, finished DESC NULLS LAST, id DESC`),
     q(`SELECT * FROM holdings WHERE user_id=$1 ORDER BY id`),
     q(`SELECT prayer, count, done_total FROM qaza WHERE user_id=$1`),
-    q(`SELECT date, prayer FROM prayer_log WHERE user_id=$1 AND date >= CURRENT_DATE - 7`),
+    q(`SELECT date, prayer, status FROM prayer_log WHERE user_id=$1 AND date >= CURRENT_DATE - 45`),
     q(`SELECT * FROM bills WHERE user_id=$1 ORDER BY active DESC, day, id`),
     q(`SELECT category, amount FROM budgets WHERE user_id=$1`),
     q(`SELECT * FROM birthdays WHERE user_id=$1 ORDER BY month, day`),
@@ -72,12 +72,16 @@ export async function getAll(uid: number): Promise<AllData> {
     q(`SELECT page, khatm FROM quran WHERE user_id=$1`),
     q(`SELECT date, pages FROM quran_log WHERE user_id=$1 AND date >= CURRENT_DATE - 60 ORDER BY date`),
     q(`SELECT * FROM zakat WHERE user_id=$1`),
+    q(`SELECT date, prayer, delta, kind, to_char(created_at AT TIME ZONE 'Asia/Tashkent','HH24:MI') AS time FROM qaza_log WHERE user_id=$1 ORDER BY created_at DESC LIMIT 200`),
+    q(`SELECT LEAST((SELECT (created_at AT TIME ZONE 'Asia/Tashkent')::date FROM users WHERE id=$1), (SELECT MIN(date) FROM prayer_log WHERE user_id=$1)) AS d`),
   ]);
   return {
     goals, debts, purchases, payments, transactions, tasks, habits, habit_logs, notes, books, holdings, qaza, prayer_log,
     bills, budgets, birthdays, fast_log, quran_log,
     quran: quranRows[0] ?? { page: 0, khatm: 0 },
     zakat: zakatRows[0] ?? null,
+    qaza_log,
+    tracking_since: since[0]?.d ? String(since[0].d).slice(0, 10) : null,
   } as unknown as AllData;
 }
 
@@ -224,7 +228,7 @@ export async function setDigest(uid: number, on: boolean) {
 // Foydalanuvchining barcha ma'lumotlarini o'chirish (hisobni o'chirish)
 export async function deleteAccount(uid: number) {
   await tx(async (q) => {
-    for (const t of ["habit_logs", "payments", "goals", "debts", "purchases", "transactions", "tasks", "habits", "notes", "books", "holdings", "qaza", "prayer_log", "sent_log", "bills", "budgets", "birthdays", "fast_log", "quran", "quran_log", "zakat"])
+    for (const t of ["habit_logs", "payments", "goals", "debts", "purchases", "transactions", "tasks", "habits", "notes", "books", "holdings", "qaza", "prayer_log", "sent_log", "bills", "budgets", "birthdays", "fast_log", "quran", "quran_log", "zakat", "qaza_log"])
       await q(`DELETE FROM ${t} WHERE user_id=$1`, [uid]);
     await q("DELETE FROM users WHERE id=$1", [uid]);
   });
@@ -264,26 +268,72 @@ export async function updateSettings(uid: number, b: Record<string, unknown>) {
 export const PRAYERS = ["bomdod", "peshin", "asr", "shom", "xufton"] as const;
 export const QAZA_KINDS = ["bomdod", "peshin", "asr", "shom", "xufton", "vitr", "roza"] as const;
 
+/** Eski API: o'qildi belgisini qo'yish/olib tashlash */
 export async function setPrayed(uid: number, date: string, prayer: string, on: boolean) {
-  if (!(PRAYERS as readonly string[]).includes(prayer)) throw new Error("Noto'g'ri namoz");
-  const db = await getDb();
-  if (on) await db.query("INSERT INTO prayer_log (user_id, date, prayer) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING", [uid, date, prayer]);
-  else await db.query("DELETE FROM prayer_log WHERE user_id=$1 AND date=$2 AND prayer=$3", [uid, date, prayer]);
+  return setPrayerStatus(uid, date, prayer, on ? "oqildi" : null);
 }
 
-/** delta>0 — qazo qo'shildi, delta<0 — qazo o'qildi (done_total oshadi) */
-export async function changeQaza(uid: number, prayer: string, delta: number) {
+/**
+ * Namoz holati: 'oqildi' | 'qazo' (qazo hisobiga yozildi) | null (belgilanmagan).
+ * 'qazo' ga o'tganda qazo hisobi +1, 'qazo' dan chiqqanda −1 (tuzatish, o'qilgan hisoblanmaydi).
+ */
+export async function setPrayerStatus(uid: number, date: string, prayer: string, status: "oqildi" | "qazo" | null) {
+  if (!(PRAYERS as readonly string[]).includes(prayer)) throw new Error("Noto'g'ri namoz");
+  const db = await getDb();
+  const prev = (await db.query("SELECT status FROM prayer_log WHERE user_id=$1 AND date=$2 AND prayer=$3", [uid, date, prayer])).rows[0]?.status ?? null;
+  if (prev === status) return;
+  if (status) {
+    await db.query(
+      `INSERT INTO prayer_log (user_id, date, prayer, status) VALUES ($1,$2,$3,$4)
+       ON CONFLICT (user_id, date, prayer) DO UPDATE SET status=EXCLUDED.status`,
+      [uid, date, prayer, status]
+    );
+  } else {
+    await db.query("DELETE FROM prayer_log WHERE user_id=$1 AND date=$2 AND prayer=$3", [uid, date, prayer]);
+  }
+  if (status === "qazo") await changeQaza(uid, prayer, 1, "day", date);
+  if (prev === "qazo") await changeQaza(uid, prayer, -1, "fix", date);
+}
+
+/** Sanalar oralig'idagi belgilanmagan namozlarni qazoga yozish (bugungi kun kirmaydi) */
+export async function bulkMissedToQaza(uid: number, from: string, to: string) {
+  const db = await getDb();
+  const r = await db.query(
+    `SELECT d::date AS date, p AS prayer
+       FROM generate_series($2::date, $3::date, interval '1 day') d
+       CROSS JOIN unnest(ARRAY['bomdod','peshin','asr','shom','xufton']) p
+      WHERE NOT EXISTS (SELECT 1 FROM prayer_log l WHERE l.user_id=$1 AND l.date=d::date AND l.prayer=p)`,
+    [uid, from, to]
+  );
+  for (const row of r.rows) await setPrayerStatus(uid, String(row.date).slice(0, 10), row.prayer, "qazo");
+  return r.rows.length;
+}
+
+/**
+ * delta>0 — qazo qo'shildi, delta<0 — qazo o'qildi (done_total oshadi).
+ * kind='fix' — xato tuzatish: done_total o'zgarmaydi.
+ */
+export async function changeQaza(uid: number, prayer: string, delta: number, kind: "manual" | "day" | "fix" = "manual", date?: string) {
   if (!(QAZA_KINDS as readonly string[]).includes(prayer)) throw new Error("Noto'g'ri namoz");
   const d = Math.max(-1000, Math.min(10000, Math.trunc(delta)));
+  if (!d) throw new Error("delta kerak");
   const db = await getDb();
+  const done = kind === "fix" ? 0 : 1;
   const r = await db.query(
     `INSERT INTO qaza (user_id, prayer, count, done_total) VALUES ($1,$2,GREATEST(0,$3),0)
      ON CONFLICT (user_id, prayer) DO UPDATE SET
-       done_total = qaza.done_total + CASE WHEN $3 < 0 THEN LEAST(-$3, qaza.count) ELSE 0 END,
+       done_total = qaza.done_total + CASE WHEN $3 < 0 AND $4 = 1 THEN LEAST(-$3, qaza.count) ELSE 0 END,
        count = GREATEST(0, qaza.count + $3)
      RETURNING prayer, count, done_total`,
-    [uid, prayer, d]
+    [uid, prayer, d, done]
   );
+  await db.query("INSERT INTO qaza_log (user_id, date, prayer, delta, kind) VALUES ($1, COALESCE($2::date, CURRENT_DATE), $3, $4, $5)", [
+    uid,
+    date ?? null,
+    prayer,
+    d,
+    kind,
+  ]);
   return r.rows[0];
 }
 

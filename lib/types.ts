@@ -105,7 +105,8 @@ export type Holding = {
 };
 
 export type Qaza = { prayer: string; count: number; done_total: number };
-export type PrayerLog = { date: string; prayer: string };
+export type PrayerLog = { date: string; prayer: string; status: "oqildi" | "qazo" };
+export type QazaLog = { date: string; prayer: string; delta: number; kind: "manual" | "day" | "fix"; time: string };
 
 export type Bill = {
   id: number;
@@ -153,4 +154,6 @@ export type AllData = {
   quran: { page: number; khatm: number };
   quran_log: { date: string; pages: number }[];
   zakat: Zakat | null;
+  qaza_log: QazaLog[];
+  tracking_since: string | null;
 };

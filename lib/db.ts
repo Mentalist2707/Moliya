@@ -291,11 +291,27 @@ const MIGRATE_V4 = `
   );
 `;
 
+// 5-bosqich: namoz holati (o'qildi / qazoga yozildi) va qazo tarixi
+const MIGRATE_V5 = `
+  ALTER TABLE prayer_log ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'oqildi';
+  CREATE TABLE IF NOT EXISTS qaza_log (
+    id SERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL,
+    date DATE NOT NULL,
+    prayer TEXT NOT NULL,
+    delta INTEGER NOT NULL,           -- +N qo'shildi, -N o'qildi
+    kind TEXT NOT NULL DEFAULT 'manual', -- manual | day (o'tgan kundan) | fix (tuzatish)
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  );
+  CREATE INDEX IF NOT EXISTS idx_qaza_log_user ON qaza_log(user_id, date);
+`;
+
 async function migrate(p: Pool) {
   await p.query(SCHEMA);
   await p.query(MIGRATE);
   await p.query(MIGRATE_V3);
   await p.query(MIGRATE_V4);
+  await p.query(MIGRATE_V5);
   // Avvalgi (bir kishilik) versiyadagi ma'lumotlarni egasiga biriktirish
   const owner = Number(process.env.TELEGRAM_OWNER_ID || 0);
   if (owner) {
