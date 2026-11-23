@@ -70,6 +70,35 @@ Tasodifiy satr: `node -e "console.log(require('crypto').randomBytes(32).toString
   `/stop` — o'chirish, `/digest` — yoqish.
   Vercel bepul tarifida cron kuniga 1 marta, soat ichida istalgan daqiqada ishlaydi.
 
+## Aniq vaqtli eslatmalar (cron-job.org)
+
+Namoz eslatmalari va ertalabki xabar (masalan, aynan 08:30) uchun har daqiqada chaqiriladigan
+tashqi cron kerak — Vercel bepul tarifida cron kuniga 1 marta va soat ichida istalgan daqiqada ishlaydi.
+
+1. https://cron-job.org → ro'yxatdan o'ting (bepul) → **Create cronjob**
+2. URL: `https://SIZNING-DOMEN.vercel.app/api/cron/tick?key=CRON_SECRET_QIYMATI`
+3. Execution schedule: **Every 1 minute** → Save
+
+Vercel Cron (`vercel.json`, har kuni 08:30–09:29) zaxira sifatida qoladi: cron-job.org ishlamasa ham
+ertalabki xabar baribir boradi.
+
+Neon bepul tarifi (oyiga 100 CU-soat) tejaladi: rejalashtiruvchi soatiga bir marta sozlamalarni o'qiydi,
+qolgan vaqtda bazani faqat xabar yuborish kerak bo'lgan daqiqalarda uyg'otadi.
+
+## Kripto portfel
+
+Moliya → Kripto: GRAM (Toncoin), BTC, XAUt (oltin) va istalgan CoinGecko tangasi. Narxlar CoinGecko'dan,
+dollar kursi O'zbekiston Markaziy bankidan. Ertalabki xabarda: portfel qiymati, kechagidan (24 soat)
+foyda/zarar, o'rtacha narx kiritilgan bo'lsa — sotib olingandan beri foyda. `COINGECKO_API_KEY`
+(ixtiyoriy, bepul demo kalit) cheklovlarga tushmaslik uchun.
+
+## Namoz
+
+Vaqtlar islomapi.uz (islom.uz) dan olinadi; u ishlamasa — astronomik hisob (Toshkent uchun islom.uz
+jadvali bilan bir xil, boshqa hududlarda ±2 daqiqa). Botdagi eslatmada «✅ O'qidim» tugmasi bor.
+Qazo hisoblagichi, ko'p kunlik qazoni bir yo'la qo'shish, kunlik maqsad. Buyruqlar: `/namoz`,
+`/namoz_on`, `/namoz_off`, `/kripto`.
+
 ## Lokal ishga tushirish
 
 ```bash
