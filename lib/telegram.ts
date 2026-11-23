@@ -66,8 +66,11 @@ export async function tg(method: string, body: Record<string, unknown>): Promise
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    return await r.json();
+    const j = await r.json();
+    if (!j.ok) console.error(`[tg] ${method} xato:`, j.description);
+    return j;
   } catch (e) {
+    console.error(`[tg] ${method} tarmoq xatosi:`, (e as Error).message);
     return { ok: false, description: (e as Error).message };
   }
 }

@@ -51,6 +51,7 @@ export async function POST(req: Request) {
   }
 
   const text = msg.text.trim();
+  console.log(`[webhook] ${uid}: ${text.slice(0, 40)}`);
   try {
     await upsertUser({ id: uid, first_name: from.first_name, last_name: from.last_name, username: from.username });
 
@@ -79,6 +80,7 @@ export async function POST(req: Request) {
       }
     }
   } catch (e) {
+    console.error("[webhook] xato:", e);
     await tg("sendMessage", { chat_id: chat, text: "Xatolik: " + (e as Error).message });
   }
   return NextResponse.json({ ok: true });

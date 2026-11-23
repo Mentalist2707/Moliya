@@ -11,6 +11,7 @@ export function withUser<C = unknown>(fn: Handler<C>) {
     try {
       return await fn(req, uid, ctx);
     } catch (e) {
+      console.error("[api]", new URL(req.url).pathname, e);
       const msg = (e as Error).message || "Xatolik";
       return NextResponse.json({ error: msg }, { status: msg === "Topilmadi" ? 404 : 400 });
     }

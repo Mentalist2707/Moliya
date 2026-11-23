@@ -17,6 +17,11 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "TELEGRAM_BOT_TOKEN va TELEGRAM_WEBHOOK_SECRET o'rnatilmagan" }, { status: 400 });
   }
   const url = appUrl(req);
+  // ?info=1 — faqat holatni ko'rish (hech narsani o'zgartirmaydi)
+  if (new URL(req.url).searchParams.get("info")) {
+    const [me, info, menu] = await Promise.all([tg("getMe", {}), tg("getWebhookInfo", {}), tg("getChatMenuButton", {})]);
+    return NextResponse.json({ app_url: url, bot: me.result, webhook_info: info.result, menu: menu.result });
+  }
   const webhook = await tg("setWebhook", {
     url: `${url}/api/telegram/webhook`,
     secret_token: process.env.TELEGRAM_WEBHOOK_SECRET,

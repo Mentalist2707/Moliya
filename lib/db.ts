@@ -157,7 +157,8 @@ async function migrate(p: Pool) {
 
 function pool(): Pool {
   if (!global.__moliyaPool) {
-    const url = process.env.DATABASE_URL;
+    // pg ogohlantirmasligi uchun sslmode=require → verify-full (xavfsizlik bir xil)
+    const url = process.env.DATABASE_URL?.replace(/sslmode=(require|prefer|verify-ca)/, "sslmode=verify-full");
     if (!url) throw new Error("DATABASE_URL o'rnatilmagan (.env faylini tekshiring)");
     const local = /@(localhost|127\.0\.0\.1)[:/]/.test(url);
     global.__moliyaPool = new Pool({
