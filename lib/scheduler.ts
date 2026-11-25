@@ -3,6 +3,7 @@ import { buildDigest } from "./digest";
 import { getPrices, portfolio, type HoldingRow } from "./market";
 import { getDayTimes, PRAYER_NAMES, toMin, type PrayerKey } from "./prayer";
 import { readingStreak, setDigest, type User } from "./repo";
+import { ruStatus } from "./ruRepo";
 import { esc, som, tg } from "./telegram";
 import { billStatus, hijri, isRamadan, nextBirthday } from "./calendar";
 
@@ -41,8 +42,9 @@ async function loadPlan(date: string): Promise<Plan> {
   const users = (
     await db.query(
       `SELECT id, first_name, daily_digest, morning_time, crypto_report, region, prayer_remind, prayer_offset, prayer_list,
-              qaza_remind, qaza_goal, fast_remind, sahar_offset, quran_goal, read_goal, read_remind, read_remind_time, quote_morning
-       FROM users WHERE daily_digest=1 OR prayer_remind=1 OR fast_remind=1 OR read_remind=1`
+              qaza_remind, qaza_goal, fast_remind, sahar_offset, quran_goal, read_goal, read_remind, read_remind_time, quote_morning,
+              ru_enabled, ru_remind, ru_remind_time
+       FROM users WHERE daily_digest=1 OR prayer_remind=1 OR fast_remind=1 OR read_remind=1 OR (ru_enabled=1 AND ru_remind=1)`
     )
   ).rows as User[];
   // Ro'za: Ramazonda — "qoldi" belgilamaganlar; boshqa kunlari — "niyat" qilganlar
@@ -67,10 +69,10 @@ export function invalidatePlan() {
   PLAN = null;
 }
 
-type Due = { morning: User[]; prayers: { u: User; p: PrayerKey; at: number }[]; fasts: { u: User; kind: "sahar" | "iftor" }[]; reads: User[] };
+type Due = { morning: User[]; prayers: { u: User; p: PrayerKey; at: number }[]; fasts: { u: User; kind: "sahar" | "iftor" }[]; reads: User[]; rus: User[] };
 
 function dueAt(plan: Plan, min: number, morningTolerance: number): Due {
-  const due: Due = { morning: [], prayers: [], fasts: [], reads: [] };
+  const due: Due = { morning: [], prayers: [], fasts: [], reads: [], rus: [] };
   for (const u of plan.users) {
     if (u.daily_digest) {
       const mt = toMin(u.morning_time || "08:30");
@@ -88,6 +90,10 @@ function dueAt(plan: Plan, min: number, morningTolerance: number): Due {
     if (u.read_remind) {
       const rt = toMin(u.read_remind_time || "21:00");
       if (min >= rt && min <= rt + 5) due.reads.push(u);
+    }
+    if (u.ru_enabled && u.ru_remind) {
+      const t = toMin(u.ru_remind_time || "20:00");
+      if (min >= t && min <= t + 5) due.rus.push(u);
     }
     if (plan.fasting.has(Number(u.id))) {
       const t = plan.times.get(u.region);
@@ -216,6 +222,18 @@ async function extrasSection(u: User, date: string): Promise<string | null> {
     L.push(h.month === 9 ? `<b>🌙 Ramazonning ${h.day}-kuni</b>` : "<b>🌙 Bugun ro'za niyatingiz bor</b>");
   }
 
+  // Rus tili
+  if (u.ru_enabled) {
+    const st = await ruStatus(uid, date).catch(() => null);
+    if (st && (st.due || st.homework.length)) {
+      if (L.length) L.push("");
+      L.push(
+        `<b>🇷🇺 Rus tili</b>: ${st.due ? `${st.due} ta so'z takrorlash` : "takrorlash yo'q"}` +
+          (st.homework.length ? `\n📌 Uy vazifasi: ${st.homework.map((h) => esc(h.homework)).join("; ")}` : "")
+      );
+    }
+  }
+
   // Kitob: streak, maqsad, tasodifiy iqtibos
   const rs = await readingStreak(uid, date);
   if (rs.streak > 0 || u.read_goal) {
@@ -292,7 +310,7 @@ export async function tick(appUrl: string, opts: { now?: number; fallback?: bool
     res.planLoaded = true;
   }
   const due = dueAt(plan, min, opts.fallback ? 180 : 5);
-  if (!due.morning.length && !due.prayers.length && !due.fasts.length && !due.reads.length) return { ...res, skipped: !res.planLoaded };
+  if (!due.morning.length && !due.prayers.length && !due.fasts.length && !due.reads.length && !due.rus.length) return { ...res, skipped: !res.planLoaded };
 
   const db = await getDb();
   if (opts.now !== undefined) res.preview = []; // lokal sinov: yuboriladigan matnlarni qaytarish
@@ -342,6 +360,22 @@ export async function tick(appUrl: string, opts: { now?: number; fallback?: bool
       `\n\nO'qib bo'lgach yozing: <code>/oqidim 10</code>`;
     res.preview?.push({ uid, kind: "read", text });
     const ok = await send(uid, text, { reply_markup: { inline_keyboard: [[{ text: "📖 O'qishni boshlash", web_app: { url: appUrl + "/#kitoblar" } }]] } });
+    if (!ok) await release(uid, key);
+  }
+
+  // 3b) Rus tili: takrorlanadigan so'zlar bo'lsa va bugun hali mashq qilinmagan bo'lsa
+  for (const u of due.rus) {
+    const uid = Number(u.id);
+    const key = `ru:${date}`;
+    const st = await ruStatus(uid, date);
+    if (st.reviewedToday > 0 || (!st.due && !st.homework.length)) continue;
+    if (!(await claim(uid, key))) continue;
+    const text =
+      `🇷🇺 <b>Rus tili</b>\n` +
+      (st.due ? `🔁 Bugun <b>${st.due} ta so'z</b> takrorlash kerak — 5 daqiqa yetadi.` : "Bugun hali mashq qilmadingiz.") +
+      (st.homework.length ? `\n\n📌 Uy vazifasi:\n${st.homework.map((h) => `• ${esc(h.homework)}`).join("\n")}` : "");
+    res.preview?.push({ uid, kind: "ru", text });
+    const ok = await send(uid, text, { reply_markup: { inline_keyboard: [[{ text: "🔁 Takrorlash", web_app: { url: appUrl + "/#rus" } }]] } });
     if (!ok) await release(uid, key);
   }
 

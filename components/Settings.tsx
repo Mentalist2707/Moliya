@@ -26,6 +26,9 @@ export type Me = {
   read_remind: number;
   read_remind_time: string;
   quote_morning: number;
+  ru_enabled: number;
+  ru_remind: number;
+  ru_remind_time: string;
   local: boolean;
 };
 

@@ -30,6 +30,9 @@ export const GET = withUser(async (_req, uid) => {
     read_remind: u?.read_remind ?? 1,
     read_remind_time: u?.read_remind_time ?? "21:00",
     quote_morning: u?.quote_morning ?? 1,
+    ru_enabled: u?.ru_enabled ?? 0,
+    ru_remind: u?.ru_remind ?? 1,
+    ru_remind_time: u?.ru_remind_time ?? "20:00",
     local: !authEnabled(),
   });
 });

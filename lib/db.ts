@@ -340,6 +340,72 @@ const MIGRATE_V6 = `
   CREATE INDEX IF NOT EXISTS idx_quotes_user ON quotes(user_id);
 `;
 
+// Rus tili kursi (faqat ru_enabled=1 bo'lgan akkauntlar uchun)
+const MIGRATE_V7 = `
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS ru_enabled SMALLINT NOT NULL DEFAULT 0;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS ru_remind SMALLINT NOT NULL DEFAULT 1;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS ru_remind_time TEXT NOT NULL DEFAULT '20:00';
+
+  CREATE TABLE IF NOT EXISTS ru_lessons (
+    id SERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL,
+    date DATE NOT NULL,
+    topic TEXT NOT NULL DEFAULT '',
+    summary TEXT,
+    grammar JSONB NOT NULL DEFAULT '[]',   -- [{title, rule, examples:[{ru,uz}]}]
+    homework TEXT,
+    hw_done SMALLINT NOT NULL DEFAULT 0,
+    notes TEXT,
+    source TEXT NOT NULL DEFAULT 'qo''lda',  -- 'rasm' | 'qo''lda'
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  );
+  CREATE INDEX IF NOT EXISTS idx_ru_lessons_user ON ru_lessons(user_id, date DESC);
+
+  CREATE TABLE IF NOT EXISTS ru_words (
+    id SERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL,
+    lesson_id INTEGER,
+    ru TEXT NOT NULL,
+    uz TEXT NOT NULL,
+    gender TEXT,            -- m | f | n | pl
+    example TEXT,
+    ease REAL NOT NULL DEFAULT 2.5,
+    ivl INTEGER NOT NULL DEFAULT 0,     -- kun
+    reps INTEGER NOT NULL DEFAULT 0,
+    lapses INTEGER NOT NULL DEFAULT 0,
+    due DATE NOT NULL DEFAULT CURRENT_DATE,
+    last_seen DATE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS ux_ru_words ON ru_words(user_id, lower(ru));
+  CREATE INDEX IF NOT EXISTS idx_ru_words_due ON ru_words(user_id, due);
+
+  -- Mashqlar to'plami (AI tuzgan)
+  CREATE TABLE IF NOT EXISTS ru_sets (
+    id SERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL,
+    lesson_id INTEGER,
+    title TEXT NOT NULL,
+    items JSONB NOT NULL DEFAULT '[]',
+    score INTEGER,
+    total INTEGER,
+    done_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  );
+  CREATE INDEX IF NOT EXISTS idx_ru_sets_user ON ru_sets(user_id, created_at DESC);
+
+  -- Kunlik statistika: takrorlashlar, to'g'ri javoblar, AI chaqiruvlari
+  CREATE TABLE IF NOT EXISTS ru_log (
+    user_id BIGINT NOT NULL,
+    date DATE NOT NULL,
+    reviews INTEGER NOT NULL DEFAULT 0,
+    correct INTEGER NOT NULL DEFAULT 0,
+    ai_calls INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (user_id, date)
+  );
+`;
+
+
 async function migrate(p: Pool) {
   await p.query(SCHEMA);
   await p.query(MIGRATE);
@@ -347,6 +413,7 @@ async function migrate(p: Pool) {
   await p.query(MIGRATE_V4);
   await p.query(MIGRATE_V5);
   await p.query(MIGRATE_V6);
+  await p.query(MIGRATE_V7);
   // Avvalgi (bir kishilik) versiyadagi ma'lumotlarni egasiga biriktirish
   const owner = Number(process.env.TELEGRAM_OWNER_ID || 0);
   if (owner) {

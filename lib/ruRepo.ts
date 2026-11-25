@@ -1,0 +1,188 @@
+import { getDb } from "./db";
+import { aiReady } from "./ai";
+import { schedule, type RuData, type RuGrammar, type RuItem, type RuPack } from "./ru";
+
+export const AI_DAILY_LIMIT = 40;
+
+const strip = <T extends Record<string, unknown>>(rows: T[]) => rows.map(({ user_id: _u, ...r }) => r) as unknown as T[];
+
+/** Bo'lim faqat yoqilgan akkauntlar uchun */
+export async function ruEnabled(uid: number): Promise<boolean> {
+  const db = await getDb();
+  const r = await db.query("SELECT ru_enabled FROM users WHERE id=$1", [uid]);
+  return Number(r.rows[0]?.ru_enabled) === 1;
+}
+
+export async function requireRu(uid: number) {
+  if (!(await ruEnabled(uid))) throw new Error("Topilmadi");
+}
+
+export async function getRu(uid: number, today: string): Promise<RuData> {
+  const db = await getDb();
+  const q = (sql: string) => db.query(sql, [uid]).then((r) => strip(r.rows));
+  const [words, lessons, sets, log] = await Promise.all([
+    q("SELECT * FROM ru_words WHERE user_id=$1 ORDER BY id DESC"),
+    q("SELECT * FROM ru_lessons WHERE user_id=$1 ORDER BY date DESC, id DESC"),
+    q("SELECT * FROM ru_sets WHERE user_id=$1 ORDER BY created_at DESC LIMIT 60"),
+    q("SELECT date, reviews, correct, ai_calls FROM ru_log WHERE user_id=$1 AND date >= CURRENT_DATE - 400 ORDER BY date"),
+  ]);
+  const used = Number((log as { date: string; ai_calls: number }[]).find((l) => String(l.date).slice(0, 10) === today)?.ai_calls ?? 0);
+  return { words, lessons, sets, log, ai: aiReady(), ai_left: Math.max(0, AI_DAILY_LIMIT - used) } as unknown as RuData;
+}
+
+/** AI chaqiruvini hisoblash; limitdan oshsa xato */
+export async function useAi(uid: number, today: string) {
+  if (!aiReady()) throw new Error("AI ulanmagan: Vercel'da ANTHROPIC_API_KEY o'rnatilmagan");
+  const db = await getDb();
+  const r = await db.query(
+    `INSERT INTO ru_log (user_id, date, ai_calls) VALUES ($1,$2,1)
+     ON CONFLICT (user_id, date) DO UPDATE SET ai_calls = ru_log.ai_calls + 1 RETURNING ai_calls`,
+    [uid, today]
+  );
+  if (Number(r.rows[0].ai_calls) > AI_DAILY_LIMIT) {
+    await db.query("UPDATE ru_log SET ai_calls = ai_calls - 1 WHERE user_id=$1 AND date=$2", [uid, today]);
+    throw new Error(`Bugungi AI limiti (${AI_DAILY_LIMIT} ta) tugadi, ertaga davom etamiz`);
+  }
+}
+
+export async function refundAi(uid: number, today: string) {
+  const db = await getDb();
+  await db.query("UPDATE ru_log SET ai_calls = GREATEST(0, ai_calls - 1) WHERE user_id=$1 AND date=$2", [uid, today]);
+}
+
+const G = new Set(["m", "f", "n", "pl"]);
+const s = (v: unknown, n: number) => (v == null || v === "" ? null : String(v).trim().slice(0, n));
+
+export async function addWords(uid: number, words: { ru: string; uz: string; gender?: string | null; example?: string | null }[], lessonId: number | null, today: string) {
+  const db = await getDb();
+  let added = 0;
+  for (const w of words) {
+    const ru = s(w.ru, 120);
+    const uz = s(w.uz, 200);
+    if (!ru || !uz) continue;
+    const r = await db.query(
+      `INSERT INTO ru_words (user_id, lesson_id, ru, uz, gender, example, due) VALUES ($1,$2,$3,$4,$5,$6,$7)
+       ON CONFLICT (user_id, lower(ru)) DO NOTHING`,
+      [uid, lessonId, ru, uz, G.has(String(w.gender)) ? w.gender : null, s(w.example, 300), today]
+    );
+    added += r.rowCount ?? 0;
+  }
+  return added;
+}
+
+export async function updateWord(uid: number, id: number, b: Record<string, unknown>) {
+  const db = await getDb();
+  await db.query(
+    `UPDATE ru_words SET ru=COALESCE($3,ru), uz=COALESCE($4,uz), gender=$5, example=$6 WHERE id=$1 AND user_id=$2`,
+    [id, uid, s(b.ru, 120), s(b.uz, 200), G.has(String(b.gender)) ? b.gender : null, s(b.example, 300)]
+  );
+}
+
+export async function deleteWord(uid: number, id: number) {
+  const db = await getDb();
+  await db.query("DELETE FROM ru_words WHERE id=$1 AND user_id=$2", [id, uid]);
+}
+
+/** Kartochkaga baho qo'yish va keyingi takrorlash sanasini hisoblash */
+export async function gradeWord(uid: number, id: number, grade: 0 | 1 | 2 | 3, today: string) {
+  const db = await getDb();
+  const r = await db.query("SELECT ease, ivl, reps, lapses FROM ru_words WHERE id=$1 AND user_id=$2", [id, uid]);
+  const w = r.rows[0];
+  if (!w) throw new Error("Topilmadi");
+  const n = schedule({ ease: Number(w.ease), ivl: Number(w.ivl), reps: Number(w.reps), lapses: Number(w.lapses) }, grade);
+  await db.query(
+    `UPDATE ru_words SET ease=$3, ivl=$4, reps=$5, lapses=$6, due=$7::date + $4::int, last_seen=$7 WHERE id=$1 AND user_id=$2`,
+    [id, uid, n.ease, n.ivl, n.reps, n.lapses, today]
+  );
+  await logReview(uid, today, 1, grade > 0 ? 1 : 0);
+  return n;
+}
+
+export async function logReview(uid: number, today: string, reviews: number, correct: number) {
+  const db = await getDb();
+  await db.query(
+    `INSERT INTO ru_log (user_id, date, reviews, correct) VALUES ($1,$2,$3,$4)
+     ON CONFLICT (user_id, date) DO UPDATE SET reviews = ru_log.reviews + $3, correct = ru_log.correct + $4`,
+    [uid, today, Math.max(0, reviews | 0), Math.max(0, correct | 0)]
+  );
+}
+
+function grammarJson(g: unknown): RuGrammar[] {
+  if (typeof g === "string") return g.trim() ? [{ title: "", rule: g.trim().slice(0, 5000) }] : [];
+  return Array.isArray(g) ? (g as RuGrammar[]).slice(0, 10) : [];
+}
+
+export async function saveLesson(uid: number, b: Record<string, unknown>) {
+  const db = await getDb();
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(String(b.date)) ? String(b.date) : null;
+  const vals = [s(b.topic, 200) ?? "", s(b.summary, 1500), JSON.stringify(grammarJson(b.grammar)), s(b.homework, 1500), b.hw_done ? 1 : 0, s(b.notes, 3000)];
+  if (b.id) {
+    await db.query(
+      `UPDATE ru_lessons SET topic=$3, summary=$4, grammar=$5, homework=$6, hw_done=$7, notes=$8, date=COALESCE($9::date, date) WHERE id=$1 AND user_id=$2`,
+      [Number(b.id), uid, ...vals, date]
+    );
+    return Number(b.id);
+  }
+  const r = await db.query(
+    `INSERT INTO ru_lessons (user_id, topic, summary, grammar, homework, hw_done, notes, date, source) VALUES ($1,$2,$3,$4,$5,$6,$7,COALESCE($8::date, CURRENT_DATE),$9) RETURNING id`,
+    [uid, ...vals, date, b.source === "rasm" ? "rasm" : "qo'lda"]
+  );
+  return Number(r.rows[0].id);
+}
+
+export async function setHomework(uid: number, id: number, done: boolean) {
+  const db = await getDb();
+  await db.query("UPDATE ru_lessons SET hw_done=$3 WHERE id=$1 AND user_id=$2", [id, uid, done ? 1 : 0]);
+}
+
+export async function deleteLesson(uid: number, id: number, withWords: boolean) {
+  const db = await getDb();
+  if (withWords) await db.query("DELETE FROM ru_words WHERE lesson_id=$1 AND user_id=$2", [id, uid]);
+  else await db.query("UPDATE ru_words SET lesson_id=NULL WHERE lesson_id=$1 AND user_id=$2", [id, uid]);
+  await db.query("DELETE FROM ru_sets WHERE lesson_id=$1 AND user_id=$2", [id, uid]);
+  await db.query("DELETE FROM ru_lessons WHERE id=$1 AND user_id=$2", [id, uid]);
+}
+
+export async function saveSet(uid: number, title: string, items: RuItem[], lessonId: number | null) {
+  const db = await getDb();
+  const r = await db.query("INSERT INTO ru_sets (user_id, lesson_id, title, items) VALUES ($1,$2,$3,$4) RETURNING id", [uid, lessonId, title.slice(0, 200), JSON.stringify(items)]);
+  return Number(r.rows[0].id);
+}
+
+export async function scoreSet(uid: number, id: number, score: number, total: number, today: string) {
+  const db = await getDb();
+  const r = await db.query("UPDATE ru_sets SET score=$3, total=$4, done_at=now() WHERE id=$1 AND user_id=$2", [id, uid, score | 0, total | 0]);
+  if (r.rowCount) await logReview(uid, today, total, score);
+}
+
+export async function deleteSet(uid: number, id: number) {
+  const db = await getDb();
+  await db.query("DELETE FROM ru_sets WHERE id=$1 AND user_id=$2", [id, uid]);
+}
+
+/** AI tuzgan to'plamni saqlash: dars + so'zlar + mashqlar */
+export async function savePack(uid: number, pack: RuPack, opts: { date: string; wordsToSave?: number[]; source: "rasm" | "qo'lda" }) {
+  const lessonId = await saveLesson(uid, {
+    topic: pack.topic,
+    summary: pack.summary,
+    grammar: pack.grammar,
+    homework: pack.homework,
+    date: opts.date,
+    source: opts.source,
+  });
+  const words = opts.wordsToSave ? pack.words.filter((_, i) => opts.wordsToSave!.includes(i)) : pack.words;
+  const added = await addWords(uid, words, lessonId, opts.date);
+  const setId = pack.exercises.length ? await saveSet(uid, pack.topic, pack.exercises, lessonId) : null;
+  return { lessonId, added, setId };
+}
+
+/** Bot va eslatmalar uchun qisqa holat */
+export async function ruStatus(uid: number, today: string) {
+  const db = await getDb();
+  const [due, hw, rev] = await Promise.all([
+    db.query("SELECT count(*)::int AS n FROM ru_words WHERE user_id=$1 AND due <= $2", [uid, today]).then((r) => Number(r.rows[0].n)),
+    db.query("SELECT topic, homework FROM ru_lessons WHERE user_id=$1 AND hw_done=0 AND COALESCE(homework,'')<>'' ORDER BY date DESC LIMIT 3", [uid]).then((r) => r.rows as { topic: string; homework: string }[]),
+    db.query("SELECT reviews FROM ru_log WHERE user_id=$1 AND date=$2", [uid, today]).then((r) => Number(r.rows[0]?.reviews ?? 0)),
+  ]);
+  return { due, homework: hw, reviewedToday: rev };
+}

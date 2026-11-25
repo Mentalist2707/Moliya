@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { appUrl, tg } from "@/lib/telegram";
 import { safeEqual } from "@/lib/auth";
+import { getDb } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
@@ -48,8 +49,7 @@ export async function GET(req: Request) {
   const menu = await tg("setChatMenuButton", {
     menu_button: { type: "web_app", text: "Ochish", web_app: { url } },
   });
-  const commands = await tg("setMyCommands", {
-    commands: [
+  const BASE = [
       { command: "start", description: "Ilovani ochish va yordam" },
       { command: "namoz", description: "Bugungi namoz vaqtlari" },
       { command: "kripto", description: "Portfel: kechagidan foyda/zarar" },
@@ -58,8 +58,25 @@ export async function GET(req: Request) {
       { command: "stop", description: "Ertalabki xabarni o'chirish" },
       { command: "namoz_off", description: "Namoz eslatmalarini o'chirish" },
       { command: "digest", description: "Ertalabki xabarni yoqish" },
-    ],
-  });
+  ];
+  const commands = await tg("setMyCommands", { commands: BASE });
+  // Rus tili bo'limi yoqilgan akkauntlarga qo'shimcha buyruqlar (faqat ularning chatida ko'rinadi)
+  const db = await getDb();
+  const ruUsers = (await db.query("SELECT id FROM users WHERE ru_enabled=1")).rows.map((r) => Number(r.id));
+  const ruCommands = [];
+  for (const id of ruUsers) {
+    ruCommands.push(
+      await tg("setMyCommands", {
+        scope: { type: "chat", chat_id: id },
+        commands: [
+          ...BASE.slice(0, 1),
+          { command: "rus", description: "Rus tili: takrorlash va uy vazifasi" },
+          { command: "soz", description: "So'z qo'shish: /soz книга - kitob" },
+          ...BASE.slice(1),
+        ],
+      })
+    );
+  }
   const me = await tg("getMe", {});
   return NextResponse.json({
     app_url: url,
@@ -67,6 +84,7 @@ export async function GET(req: Request) {
     webhook,
     menu,
     commands,
+    ru_commands: ruCommands.length,
     next_step: "Brauzerdan kirish uchun @BotFather → /setdomain → botni tanlang → " + new URL(url).host,
   });
 }

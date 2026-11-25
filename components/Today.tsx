@@ -1,7 +1,8 @@
 "use client";
 
 import { readingStats } from "@/lib/reading";
-import { useState } from "react";
+import { ruStreak, type RuData } from "@/lib/ru";
+import { useEffect, useState } from "react";
 import type { Habit, Task } from "@/lib/types";
 import { daysLeft, greeting, HAFTA, muddatLabel, OYLAR, som, somShort, todayStr } from "@/lib/format";
 import { logSet, streak } from "@/lib/habits";
@@ -317,6 +318,8 @@ export default function Today({ go, me, openSettings }: { go: (t: Tab, sub?: str
         </div>
       )}
 
+      {!!me?.ru_enabled && <RuTodayCard go={go} />}
+
       {reading.length > 0 && (
         <div className="card" style={{ "--c": "var(--books)" } as React.CSSProperties}>
           <h2>
@@ -416,5 +419,32 @@ export default function Today({ go, me, openSettings }: { go: (t: Tab, sub?: str
       {habit && <HabitForm kind={habit.kind} initial={habit} onClose={() => setHabit(null)} />}
       {page !== null && d.books.find((b) => b.id === page) && <PageForm book={d.books.find((b) => b.id === page)!} onClose={() => setPage(null)} />}
     </>
+  );
+}
+
+/** Rus tili: bugungi takrorlash va uy vazifasi */
+function RuTodayCard({ go }: { go: (t: Tab, sub?: string) => void }) {
+  const [r, setR] = useState<RuData | null>(null);
+  useEffect(() => {
+    api<RuData>("/api/ru").then(setR).catch(() => {});
+  }, []);
+  if (!r) return null;
+  const today = todayStr();
+  const due = r.words.filter((w) => w.due.slice(0, 10) <= today).length;
+  const hw = r.lessons.filter((l) => l.homework && !l.hw_done).length;
+  const { streak, today: done } = ruStreak(r.log, today);
+  if (!r.words.length && !r.lessons.length) return null;
+  return (
+    <button className="card" onClick={() => go("rus")} style={{ display: "flex", alignItems: "center", gap: 14, border: 0, font: "inherit", color: "inherit", textAlign: "left", cursor: "pointer", width: "100%" }}>
+      <span style={{ fontSize: 30 }} aria-hidden="true">🇷🇺</span>
+      <span style={{ flex: 1, display: "grid", gap: 2 }}>
+        <b>Rus tili{streak ? ` · 🔥 ${streak}` : ""}</b>
+        <span style={{ fontSize: 14, color: "var(--muted)" }}>
+          {due ? `${due} ta so'z takrorlash kerak` : done ? "Bugungi takrorlash bajarildi ✓" : "Bugun takrorlash yo'q"}
+          {hw ? ` · ${hw} ta uy vazifasi` : ""}
+        </span>
+      </span>
+      <span className="pill">{due ? "Boshlash" : "Ochish"}</span>
+    </button>
   );
 }

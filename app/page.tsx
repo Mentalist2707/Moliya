@@ -12,11 +12,12 @@ import Habits from "@/components/Habits";
 import Finance from "@/components/Finance";
 import Notes from "@/components/Notes";
 import Books from "@/components/Books";
+import Russian from "@/components/Russian";
 import Namoz, { type IbSub } from "@/components/Namoz";
 import Settings, { Avatar, type Me } from "@/components/Settings";
 
 // mobile: false — telefonda pastki menyuda yo'q (Odatlar → Vazifalar ichida)
-const NAV: { id: Tab; label: string; short: string; icon: keyof typeof I; color: string; mobile?: false }[] = [
+const NAV: { id: Tab; label: string; short: string; icon: keyof typeof I; color: string; mobile?: false; ru?: true }[] = [
   { id: "bugun", label: "Bugun", short: "Bugun", icon: "today", color: "var(--brand)" },
   { id: "vazifalar", label: "Vazifalar", short: "Vazifa", icon: "tasks", color: "var(--tasks)" },
   { id: "odatlar", label: "Odatlar", short: "Odat", icon: "habit", color: "var(--habit)", mobile: false },
@@ -24,6 +25,7 @@ const NAV: { id: Tab; label: string; short: string; icon: keyof typeof I; color:
   { id: "namoz", label: "Ibodat", short: "Ibodat", icon: "mosque", color: "var(--habit)" },
   { id: "eslatmalar", label: "Eslatmalar", short: "Eslatma", icon: "notes", color: "var(--notes)" },
   { id: "kitoblar", label: "Kutubxona", short: "Kitob", icon: "books", color: "var(--books)" },
+  { id: "rus", label: "Rus tili", short: "Rus", icon: "ru", color: "var(--tasks)", ru: true },
 ];
 const FIN_SUBS: FinSub[] = ["tx", "crypto", "bills", "debts", "goals", "buy", "zakat"];
 
@@ -236,7 +238,7 @@ export default function Home() {
           <div className="logo">
             <i>M</i>Moliya
           </div>
-          {NAV.map((n) => {
+          {NAV.filter((n) => !n.ru || me?.ru_enabled).map((n) => {
             const Ic = I[n.icon];
             return (
               <button key={n.id} className="navbtn" aria-current={tab === n.id ? "page" : undefined} style={{ "--c": n.color } as React.CSSProperties} onClick={() => nav(n.id, undefined, "tab")}>
@@ -286,11 +288,12 @@ export default function Home() {
             {data && tab === "namoz" && <Namoz openSettings={() => setSettings(true)} quranGoal={me?.quran_goal ?? 0} seg={ib} setSeg={(v) => nav("namoz", v === "namoz" ? undefined : v, "replace")} />}
             {data && tab === "eslatmalar" && <Notes />}
             {data && tab === "kitoblar" && <Books me={me} setMe={setMe} />}
+            {data && tab === "rus" && !!me?.ru_enabled && <Russian me={me} setMe={setMe} />}
           </div>
         </main>
 
         <nav className="bottom" aria-label="Bo'limlar">
-          {NAV.filter((n) => n.mobile !== false).map((n) => {
+          {NAV.filter((n) => n.mobile !== false && (!n.ru || me?.ru_enabled)).map((n) => {
             const Ic = I[n.icon];
             return (
               <button
