@@ -32,7 +32,7 @@ type TgWebApp = {
   expand: () => void;
   colorScheme?: "light" | "dark";
   initData?: string;
-  initDataUnsafe?: { user?: { first_name?: string } };
+  initDataUnsafe?: { user?: { id?: number; first_name?: string } };
   setHeaderColor?: (c: string) => void;
   setBackgroundColor?: (c: string) => void;
   disableVerticalSwipes?: () => void;
@@ -108,9 +108,30 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    reload();
     readHash();
-    api<Me>("/api/me").then(setMe).catch(() => {});
+    (async () => {
+      // Bitta telefonda bir nechta Telegram akkaunt bo'lsa, cookie umumiy bo'ladi.
+      // Mini App'dagi akkaunt sessiyadagidan farq qilsa — shu akkaunt bilan qayta kiramiz.
+      const w = tgApp();
+      const tgId = w?.initDataUnsafe?.user?.id;
+      const m = await api<Me>("/api/me").catch(() => null);
+      if (w && tgId && String(m?.id ?? "") !== String(tgId)) {
+        const key = "moliya_reauth_" + tgId;
+        if (!sessionStorage.getItem(key)) {
+          sessionStorage.setItem(key, "1");
+          const r = await fetch("/api/tg-auth", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ initData: w.initData }) });
+          if (r.ok) {
+            location.reload();
+            return;
+          }
+        }
+        setLoadErr("Telegram akkauntingiz bilan kirib bo'lmadi. Ilovani yopib, qayta oching.");
+        return;
+      }
+      if (tgId) sessionStorage.removeItem("moliya_reauth_" + tgId);
+      if (m) setMe(m);
+      reload();
+    })();
     window.addEventListener("hashchange", readHash);
     // Boshqa oynadan qaytganda yangilash (masalan, botga xarajat yozgandan keyin)
     const onVis = () => document.visibilityState === "visible" && reload();
