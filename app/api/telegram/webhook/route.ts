@@ -6,7 +6,7 @@ import { isAllowed } from "@/lib/auth";
 import { checkBudget } from "@/lib/budget";
 import { parseQuickTx } from "@/lib/categories";
 import { appUrl, esc, openAppButton, som, tg, todayIn } from "@/lib/telegram";
-import { addWords, refundAi, ruEnabled, ruStatus, savePack, useAi } from "@/lib/ruRepo";
+import { addWords, answerPoll, pickQuizWords, refundAi, ruEnabled, ruStatus, savePack, savePoll, useAi } from "@/lib/ruRepo";
 import { packFromImages } from "@/lib/ruAi";
 
 export const dynamic = "force-dynamic";
@@ -35,6 +35,7 @@ Buyruqlar:
 Sozlamalarning hammasi ilovada: avatar → Sozlamalar.`;
 
 type Update = {
+  poll_answer?: { poll_id: string; user?: { id: number }; option_ids: number[] };
   callback_query?: {
     id: string;
     from: { id: number };
@@ -50,6 +51,30 @@ type Update = {
     document?: { file_id: string; mime_type?: string; file_size?: number; file_name?: string };
   };
 };
+
+/** Rus tili: Telegram ichida 5 ta test (quiz poll) */
+async function sendWordQuiz(uid: number, chat: number, url: string) {
+  const { words, pool } = await pickQuizWords(uid, todayIn(), 5);
+  if (!words.length) {
+    await tg("sendMessage", { chat_id: chat, text: "Hali o'rganilgan so'z yo'q. Avval ilovada «Yangi so'zlar»ni boshlang.", reply_markup: openAppButton(url + "/#rus", "🆕 Yangi so'zlar") });
+    return;
+  }
+  for (const w of words) {
+    const wrong = [...new Set(pool.filter((x) => x !== w.uz))].sort(() => Math.random() - 0.5).slice(0, 3);
+    const options = [w.uz, ...wrong].sort(() => Math.random() - 0.5);
+    const correct = options.indexOf(w.uz);
+    const r = (await tg("sendPoll", {
+      chat_id: chat,
+      question: `«${w.ru}» — tarjimasi?`.slice(0, 300),
+      options: options.map((o) => ({ text: o.slice(0, 100) })),
+      type: "quiz",
+      correct_option_id: correct,
+      is_anonymous: false,
+      explanation: w.example ? w.example.slice(0, 200) : undefined,
+    })) as { ok: boolean; result?: { poll?: { id: string } } };
+    if (r.ok && r.result?.poll?.id) await savePoll(uid, r.result.poll.id, Number(w.id), correct);
+  }
+}
 
 /** Telegram'dagi faylni yuklab olib base64 qilish */
 async function tgFileBase64(fileId: string): Promise<string> {
@@ -98,8 +123,19 @@ export async function POST(req: Request) {
 
   const upd = (await req.json().catch(() => ({}))) as Update;
 
+  // Rus tili testiga javob
+  if (upd.poll_answer?.user && upd.poll_answer.option_ids?.length) {
+    await answerPoll(upd.poll_answer.poll_id, upd.poll_answer.user.id, upd.poll_answer.option_ids[0], todayIn()).catch((e) => console.error("[poll]", e));
+    return NextResponse.json({ ok: true });
+  }
+
   // Inline tugmalar: "✅ O'qidim" (pr:YYYY-MM-DD:namoz)
   const cb = upd.callback_query;
+  if (cb?.data === "rt" && isAllowed(cb.from.id) && cb.message) {
+    await tg("answerCallbackQuery", { callback_query_id: cb.id });
+    if (await ruEnabled(cb.from.id)) await sendWordQuiz(cb.from.id, cb.message.chat.id, appUrl(req));
+    return NextResponse.json({ ok: true });
+  }
   let m2: RegExpMatchArray | null = null;
   if (cb) {
     const m = (cb.data || "").match(/^pr:(\d{4}-\d{2}-\d{2}):(bomdod|peshin|asr|shom|xufton)$/);
@@ -242,16 +278,18 @@ export async function POST(req: Request) {
           text: `🔤 ${added} ta so'z qo'shildi${words.length - added ? ` (${words.length - added} tasi oldin bor edi)` : ""}:\n${words.map((w) => `${esc(w.ru)} — ${esc(w.uz)}`).join("\n").slice(0, 3500)}`,
         });
       }
+    } else if (text.startsWith("/test") && (await ruEnabled(uid))) {
+      await sendWordQuiz(uid, chat, url);
     } else if (text.startsWith("/rus") && (await ruEnabled(uid))) {
       const st = await ruStatus(uid, todayIn());
       await tg("sendMessage", {
         chat_id: chat,
         parse_mode: "HTML",
         text:
-          `🇷🇺 <b>Rus tili</b>\n${st.due ? `🔁 ${st.due} ta so'z takrorlash kerak` : "✓ Bugun takrorlash yo'q"}` +
+          `🇷🇺 <b>Rus tili</b>\n${st.due ? `🔁 ${st.due} ta so'z takrorlash kerak` : "✓ Bugun takrorlash yo'q"}${st.fresh ? `\n🆕 ${st.fresh} ta yangi so'z kutmoqda` : ""}` +
           (st.homework.length ? `\n\n📌 <b>Uy vazifasi:</b>\n${st.homework.map((h) => `• ${esc(h.homework)} <i>(${esc(h.topic)})</i>`).join("\n")}` : "") +
           `\n\nDars rasmini shu yerga yuboring — so'zlar va mashqlar avtomatik tuziladi.`,
-        reply_markup: openAppButton(url + "/#rus", st.due ? "🔁 Takrorlash" : "📱 Rus tili"),
+        reply_markup: { inline_keyboard: [[{ text: st.due ? "🔁 Takrorlash" : "📱 Rus tili", web_app: { url: url + "/#rus" } }], [{ text: "🎯 Shu yerda test", callback_data: "rt" }]] },
       });
     } else if (text.startsWith("/kripto")) {
       const c = await cryptoSection(uid);

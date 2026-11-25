@@ -1,33 +1,19 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { todayStr } from "@/lib/format";
 import {
-  almost, GENDER_LABEL, isCorrect, ivlLabel, ruStreak, schedule, shuffle,
-  type RuData, type RuItem, type RuLesson, type RuPack, type RuSet, type RuWord,
+  almost, GENDER_LABEL, isCorrect, isDueReview, ivlLabel, ruStreak, shuffle, STATE_LABEL, wordState,
+  type RuData, type RuItem, type RuLesson, type RuPack, type RuSet, type RuWord, type WordState,
 } from "@/lib/ru";
 import { GRAMMAR } from "@/lib/ruGrammar";
 import { api, Bar, Chips, Confirm, Empty, Field, Foot, Seg, Sheet, useStore, useSubmit } from "./ui";
 import { I } from "./icons";
 import type { Me } from "./Settings";
+import { autoplay, canSpeak, post, RuCtx, setAutoplay, useRu, type Ctx, type Open } from "./ruCtx";
+import { LearnSheet, MatchGame, ReviewSheet, SpeakBtn, StackBar, useDayCounts } from "./RuVocab";
 
 type Sub = "bugun" | "sozlar" | "darslar" | "grammatika";
-type Open =
-  | null
-  | { k: "review" }
-  | { k: "photo" }
-  | { k: "gen"; lessonId?: number }
-  | { k: "quiz" }
-  | { k: "set"; id: number }
-  | { k: "word"; w?: RuWord }
-  | { k: "lesson"; l: RuLesson }
-  | { k: "lessonForm"; l?: RuLesson }
-  | { k: "settings" };
-
-type Ctx = { r: RuData; reload: () => Promise<void>; open: (o: Open) => void; run: (fn: () => Promise<unknown>, msg?: string) => Promise<void> };
-const RuCtx = createContext<Ctx | null>(null);
-const useRu = () => useContext(RuCtx)!;
-const post = <T = { ok: boolean }>(body: Record<string, unknown>) => api<T>("/api/ru", "POST", body);
 
 const GTAG: Record<string, string> = { m: "м", f: "ж", n: "ср", pl: "мн" };
 
@@ -66,7 +52,7 @@ export default function Russian({ me, setMe }: { me: Me | null; setMe: (m: Me) =
 
   if (err) return <div className="card"><Empty emoji="⚠️" text={err} btn="Qayta urinish" onAdd={reload} /></div>;
   if (!r) return <div className="card"><Empty emoji="⏳" text="Yuklanmoqda…" /></div>;
-  const ctx: Ctx = { r, reload, open: setO, run };
+  const ctx: Ctx = { r, me, reload, open: setO, run };
   const close = () => setO(null);
 
   return (
@@ -103,7 +89,9 @@ export default function Russian({ me, setMe }: { me: Me | null; setMe: (m: Me) =
         </button>
       )}
 
-      {o?.k === "review" && <ReviewSheet onClose={close} />}
+      {o?.k === "review" && <ReviewSheet lessonId={o.lessonId} onClose={close} />}
+      {o?.k === "learn" && <LearnSheet lessonId={o.lessonId} onClose={close} />}
+      {o?.k === "match" && <MatchGame onClose={close} />}
       {o?.k === "photo" && <PhotoSheet onClose={close} />}
       {o?.k === "gen" && <GenSheet lessonId={o.lessonId} onClose={close} />}
       {o?.k === "quiz" && <WordQuiz onClose={close} />}
@@ -120,14 +108,17 @@ export default function Russian({ me, setMe }: { me: Me | null; setMe: (m: Me) =
 function TodayTab() {
   const { r, open, run } = useRu();
   const today = todayStr();
-  const due = r.words.filter((w) => w.due.slice(0, 10) <= today);
-  const fresh = due.filter((w) => w.reps === 0).length;
-  const { streak, today: doneToday } = ruStreak(r.log, today);
-  const learned = r.words.filter((w) => w.ivl >= 21).length;
+  const { limit, learnedToday, newLeft, newTotal, due } = useDayCounts();
+  const { streak } = ruStreak(r.log, today);
+  const known = r.words.filter((w) => wordState(w) === "known").length;
+  const learning = r.words.filter((w) => wordState(w) === "learning").length;
   const hw = r.lessons.filter((l) => l.homework && !l.hw_done);
   const sets = r.sets.slice(0, 8);
   const last7 = r.log.filter((l) => l.date.slice(0, 10) > new Date(Date.parse(today) - 7 * 86400000).toISOString().slice(0, 10));
-  const acc = last7.reduce((a, l) => a + l.reviews, 0) ? Math.round((last7.reduce((a, l) => a + l.correct, 0) / last7.reduce((a, l) => a + l.reviews, 0)) * 100) : null;
+  const rev7 = last7.reduce((a, l) => a + l.reviews, 0);
+  const acc = rev7 ? Math.round((last7.reduce((a, l) => a + l.correct, 0) / rev7) * 100) : null;
+  const lessonsW = r.lessons.map((l) => ({ l, ws: r.words.filter((w) => w.lesson_id === l.id) })).filter((x) => x.ws.length);
+  const goalDone = due === 0 && (newLeft === 0 || learnedToday >= limit);
 
   return (
     <>
@@ -135,40 +126,92 @@ function TodayTab() {
         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
           <div style={{ flex: 1, display: "grid", gap: 2 }}>
             <span style={{ fontSize: 26, fontWeight: 800, letterSpacing: "-0.02em", color: streak ? "var(--brand)" : "var(--muted)" }}>🔥 {streak} kun</span>
-            <span style={{ fontSize: 13, color: "var(--muted)" }}>
-              {doneToday ? `Bugun ${doneToday} ta mashq bajarildi` : "Bugun hali mashq qilinmadi"}
-              {acc !== null ? ` · 7 kunda ${acc}% to'g'ri` : ""}
-            </span>
+            <span style={{ fontSize: 13, color: "var(--muted)" }}>{goalDone ? "Bugungi reja bajarildi ✓" : "Har kuni ozgina — eng yaxshi usul"}{acc !== null ? ` · 7 kunda ${acc}% to'g'ri` : ""}</span>
           </div>
           <div style={{ textAlign: "right" }}>
             <div className="num" style={{ fontSize: 22, fontWeight: 800 }}>
-              {learned}/{r.words.length}
+              {known}
+              <small style={{ fontSize: 14, color: "var(--muted)", fontWeight: 600 }}>/{r.words.length}</small>
             </div>
             <div style={{ fontSize: 12, color: "var(--muted)" }}>yod bo&apos;lgan</div>
           </div>
         </div>
-        <button className="btn brand block" disabled={!due.length} onClick={() => open({ k: "review" })}>
-          🔁 {due.length ? `Takrorlash — ${due.length} ta so'z${fresh ? ` (${fresh} yangi)` : ""}` : "Bugungi takrorlash bajarildi ✓"}
-        </button>
-        <div className="ru-actions">
+        <div style={{ display: "grid", gap: 6 }}>
+          <StackBar words={r.words} />
+          <div className="ru-legend">
+            <span><i style={{ background: "var(--money)" }} />yod {known}</span>
+            <span><i style={{ background: "var(--warn)" }} />o&apos;rganilmoqda {learning}</span>
+            <span><i style={{ background: "var(--surface-2)" }} />yangi {newTotal}</span>
+          </div>
+        </div>
+        <div className="ru-today">
+          <button className={due ? "hot" : ""} onClick={() => open({ k: "review" })}>
+            <b>🔁 {due}</b>
+            <span>takrorlash</span>
+          </button>
+          <button className={!due && newLeft ? "hot" : ""} onClick={() => open({ k: "learn" })}>
+            <b>
+              🆕 {learnedToday}/{limit}
+            </b>
+            <span>yangi so&apos;z bugun</span>
+          </button>
+        </div>
+        {due > 0 ? (
+          <button className="btn brand block" onClick={() => open({ k: "review" })}>
+            🔁 Takrorlash — {due} ta so&apos;z
+          </button>
+        ) : newLeft > 0 ? (
+          <button className="btn brand block" onClick={() => open({ k: "learn" })}>
+            🆕 Yangi so&apos;zlarni o&apos;rganish — {Math.min(7, newLeft)} ta
+          </button>
+        ) : (
+          <button className="btn soft block" onClick={() => open({ k: "match" })}>
+            🧩 Juftlash o&apos;yini — mustahkamlash
+          </button>
+        )}
+        <div className="ru-actions four">
+          <button onClick={() => open({ k: "match" })} disabled={r.words.length < 4}>
+            <b>🧩</b>
+            <span>Juftlash</span>
+          </button>
+          <button onClick={() => open({ k: "quiz" })} disabled={r.words.length < 4}>
+            <b>📝</b>
+            <span>Test</span>
+          </button>
           <button onClick={() => open({ k: "photo" })}>
             <b>📷</b>
-            <span>Rasmdan dars</span>
-            <small>darslik, daftar, doska</small>
+            <span>Rasmdan</span>
           </button>
           <button onClick={() => open({ k: "gen" })}>
             <b>✨</b>
             <span>AI mashq</span>
-            <small>mavzu bo&apos;yicha</small>
-          </button>
-          <button onClick={() => open({ k: "quiz" })} disabled={r.words.length < 4}>
-            <b>📝</b>
-            <span>So&apos;z testi</span>
-            <small>{r.words.length < 4 ? "kamida 4 so'z kerak" : "10 ta savol"}</small>
           </button>
         </div>
-        {!r.ai && <p className="ru-warn">AI hali ulanmagan — rasm va AI mashqlar ishlashi uchun Vercel'da ANTHROPIC_API_KEY qo&apos;shilishi kerak.</p>}
       </div>
+
+      {lessonsW.length > 0 && (
+        <div className="card flush">
+          <h2>📘 Darslar bo&apos;yicha</h2>
+          {lessonsW.map(({ l, ws }) => {
+            const k = ws.filter((w) => wordState(w) === "known").length;
+            const n = ws.filter((w) => w.reps === 0).length;
+            const d = ws.filter((w) => isDueReview(w, today)).length;
+            return (
+              <button key={l.id} className="row" style={{ width: "100%", background: "none", border: 0, font: "inherit", color: "inherit", textAlign: "left", cursor: "pointer" }} onClick={() => open({ k: "lesson", l })}>
+                <span className="body" style={{ gap: 6 }}>
+                  <span className="t">{l.topic}</span>
+                  <StackBar words={ws} />
+                  <span className="m">
+                    {ws.length} so&apos;z · yod {k}
+                    {n ? ` · yangi ${n}` : ""}
+                    {d ? <b style={{ color: "var(--brand)" }}>takrorlash {d}</b> : null}
+                  </span>
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {hw.length > 0 && (
         <div className="card flush">
@@ -227,113 +270,6 @@ function SetRow({ s }: { s: RuSet }) {
       </span>
       <span className="pill">{pct === null ? "Boshlash" : "Qayta"}</span>
     </button>
-  );
-}
-
-/* ============================== Takrorlash (kartochkalar) ============================== */
-function ReviewSheet({ onClose }: { onClose: () => void }) {
-  const { r, reload } = useRu();
-  const { haptic } = useStore();
-  const today = todayStr();
-  const [queue, setQueue] = useState<{ w: RuWord; rev: boolean }[]>(() =>
-    shuffle(r.words.filter((w) => w.due.slice(0, 10) <= today))
-      .slice(0, 60)
-      .map((w, i) => ({ w, rev: w.reps > 1 && i % 2 === 1 })) // yangi so'zlar ruscha → o'zbekcha, keyin aralash
-  );
-  const [shown, setShown] = useState(false);
-  const [done, setDone] = useState({ n: 0, ok: 0 });
-  const cur = queue[0];
-  useEffect(() => () => void reload(), [reload]);
-
-  const grade = async (g: 0 | 1 | 2 | 3) => {
-    if (!cur) return;
-    haptic(g ? "light" : undefined);
-    post({ action: "word.grade", id: cur.w.id, grade: g }).catch(() => {});
-    setDone((d) => ({ n: d.n + 1, ok: d.ok + (g ? 1 : 0) }));
-    setShown(false);
-    setQueue((q) => {
-      const [h, ...rest] = q;
-      if (g === 0) {
-        // Esimda yo'q — biroz keyin yana chiqadi
-        const at = Math.min(rest.length, 3);
-        const w = { ...h.w, ...schedule(h.w, 0) };
-        return [...rest.slice(0, at), { w, rev: h.rev }, ...rest.slice(at)];
-      }
-      return rest;
-    });
-  };
-
-  if (!cur) {
-    return (
-      <Sheet title="Takrorlash" onClose={onClose}>
-        <div className="form" style={{ textAlign: "center", justifyItems: "center" }}>
-          <span style={{ fontSize: 56 }}>🎉</span>
-          <h3 style={{ margin: 0 }}>{done.n ? "Barakalla! Bugungi takrorlash tugadi" : "Hozircha takrorlash yo'q"}</h3>
-          {done.n > 0 && (
-            <p style={{ margin: 0, color: "var(--muted)" }}>
-              {done.n} ta javob · {Math.round((done.ok / done.n) * 100)}% esingizda
-            </p>
-          )}
-          <button className="btn brand" onClick={onClose}>
-            Yopish
-          </button>
-        </div>
-      </Sheet>
-    );
-  }
-  const w = cur.w;
-  const front = cur.rev ? w.uz : w.ru;
-  const next = (g: 0 | 1 | 2 | 3) => ivlLabel(schedule(w, g).ivl);
-  return (
-    <Sheet title="Takrorlash" onClose={onClose}>
-      <div className="form">
-        <Bar pct={(done.n / Math.max(1, done.n + queue.length)) * 100} color="var(--brand)" />
-        <button className={"ru-card" + (shown ? " shown" : "")} onClick={() => setShown(true)} aria-live="polite">
-          <small>{cur.rev ? "Ruschasini eslang" : w.reps === 0 ? "Yangi so'z" : "Tarjimasini eslang"}</small>
-          <span className="ru-front" lang={cur.rev ? "uz" : "ru"}>
-            {front}
-          </span>
-          {!cur.rev && w.gender && <span className="pill">{GENDER_LABEL[w.gender]}</span>}
-          {shown ? (
-            <>
-              <hr />
-              <span className="ru-back" lang={cur.rev ? "ru" : "uz"}>
-                {cur.rev ? w.ru : w.uz}
-              </span>
-              {cur.rev && w.gender && <span className="pill">{GENDER_LABEL[w.gender]}</span>}
-              {w.example && (
-                <i lang="ru" style={{ color: "var(--muted)" }}>
-                  {w.example}
-                </i>
-              )}
-            </>
-          ) : (
-            <small style={{ marginTop: 18 }}>Bosing — javobni ko&apos;rish</small>
-          )}
-        </button>
-        {shown ? (
-          <div className="ru-grades">
-            <button onClick={() => grade(0)} className="g0">
-              Esimda yo&apos;q<small>{next(0)}</small>
-            </button>
-            <button onClick={() => grade(1)} className="g1">
-              Qiyin<small>{next(1)}</small>
-            </button>
-            <button onClick={() => grade(2)} className="g2">
-              Esimda<small>{next(2)}</small>
-            </button>
-            <button onClick={() => grade(3)} className="g3">
-              Oson<small>{next(3)}</small>
-            </button>
-          </div>
-        ) : (
-          <button className="btn brand block" onClick={() => setShown(true)}>
-            Javobni ko&apos;rish
-          </button>
-        )}
-        <p style={{ margin: 0, fontSize: 12, color: "var(--muted)", textAlign: "center" }}>Qolgan: {queue.length} ta · Esdan chiqqanlar tezroq, yaxshi bilganlar kamroq qaytariladi</p>
-      </div>
-    </Sheet>
   );
 }
 
@@ -838,25 +774,31 @@ function GenSheet({ lessonId, onClose }: { lessonId?: number; onClose: () => voi
 }
 
 /* ============================== So'zlar ============================== */
-type WF = "all" | "due" | "hard" | "known";
+type WF = "all" | WordState | "hard" | "due";
 function WordsTab() {
   const { r, open } = useRu();
   const [q, setQ] = useState("");
   const [f, setF] = useState<WF>("all");
+  const [closed, setClosed] = useState<Set<string>>(new Set());
   const today = todayStr();
-  const list = r.words.filter((w) => {
+  const match = (w: RuWord) => {
     if (q && !(w.ru.toLowerCase().includes(q.toLowerCase()) || w.uz.toLowerCase().includes(q.toLowerCase()))) return false;
-    if (f === "due") return w.due.slice(0, 10) <= today;
     if (f === "hard") return w.lapses > 0;
-    if (f === "known") return w.ivl >= 21;
+    if (f === "due") return isDueReview(w, today);
+    if (f !== "all") return wordState(w) === f;
     return true;
-  });
+  };
   if (!r.words.length)
     return (
       <div className="card">
-        <Empty emoji="🔤" text="Hali so'z yo'q. Qo'lda qo'shing yoki dars rasmini yuklang — so'zlar avtomatik qo'shiladi." btn="So'z qo'shish" onAdd={() => open({ k: "word" })} />
+        <Empty emoji="🔤" text="Hali so'z yo'q. Qo'lda qo'shing yoki dars rasmini yuboring." btn="So'z qo'shish" onAdd={() => open({ k: "word" })} />
       </div>
     );
+  const groups = [
+    ...r.lessons.map((l) => ({ key: String(l.id), title: l.topic, lessonId: l.id as number | undefined, all: r.words.filter((w) => w.lesson_id === l.id) })),
+    { key: "none", title: "Boshqa so'zlar", lessonId: undefined, all: r.words.filter((w) => !w.lesson_id || !r.lessons.some((l) => l.id === w.lesson_id)) },
+  ].filter((g) => g.all.length);
+  const cnt = (fn: (w: RuWord) => boolean) => r.words.filter(fn).length;
   return (
     <>
       <input className="search" type="search" placeholder="Qidirish (ruscha yoki o'zbekcha)…" value={q} onChange={(e) => setQ(e.target.value)} />
@@ -865,25 +807,74 @@ function WordsTab() {
         onChange={setF}
         options={[
           { v: "all", t: `Hammasi · ${r.words.length}` },
-          { v: "due", t: `Takrorlash · ${r.words.filter((w) => w.due.slice(0, 10) <= today).length}` },
-          { v: "hard", t: `Qiyin · ${r.words.filter((w) => w.lapses > 0).length}` },
-          { v: "known", t: `Yod · ${r.words.filter((w) => w.ivl >= 21).length}` },
+          { v: "due", t: `Takrorlash · ${cnt((w) => isDueReview(w, today))}` },
+          { v: "new", t: `Yangi · ${cnt((w) => w.reps === 0)}` },
+          { v: "learning", t: `O'rganilmoqda · ${cnt((w) => wordState(w) === "learning")}` },
+          { v: "known", t: `Yod · ${cnt((w) => wordState(w) === "known")}` },
+          { v: "hard", t: `Qiyin · ${cnt((w) => w.lapses > 0)}` },
         ]}
       />
-      <div className="card flush">
-        {list.length === 0 && <Empty emoji="🔍" text="Topilmadi" />}
-        {list.slice(0, 300).map((w) => (
-          <button key={w.id} className="row" style={{ width: "100%", background: "none", border: 0, font: "inherit", color: "inherit", textAlign: "left", cursor: "pointer" }} onClick={() => open({ k: "word", w })}>
-            <span className="body">
-              <span className="t" lang="ru">
-                {w.ru} {w.gender && <span className="ru-g">{GTAG[w.gender]}</span>}
+      {groups.map((g) => {
+        const list = g.all.filter(match);
+        if (!list.length) return null;
+        const isClosed = closed.has(g.key) && !q;
+        return (
+          <div key={g.key} className="card flush">
+            <button
+              className="ru-group"
+              aria-expanded={!isClosed}
+              onClick={() => {
+                const n = new Set(closed);
+                if (n.has(g.key)) n.delete(g.key);
+                else n.add(g.key);
+                setClosed(n);
+              }}
+            >
+              <span style={{ flex: 1, display: "grid", gap: 6 }}>
+                <b>{g.title}</b>
+                <StackBar words={g.all} />
+                <small>
+                  {g.all.length} so&apos;z · yod {g.all.filter((w) => wordState(w) === "known").length} · yangi {g.all.filter((w) => w.reps === 0).length}
+                </small>
               </span>
-              <span className="m">{w.uz}</span>
-            </span>
-            <span className="ru-due">{w.reps === 0 ? "yangi" : w.due.slice(0, 10) <= today ? "bugun" : ivlLabel(Math.round((Date.parse(w.due) - Date.parse(today)) / 86400000))}</span>
-          </button>
-        ))}
-      </div>
+              <span aria-hidden="true" className="ru-chev">
+                {isClosed ? "+" : "−"}
+              </span>
+            </button>
+            {!isClosed && (
+              <>
+                {g.all.some((w) => w.reps === 0) && (
+                  <div style={{ padding: "0 12px 8px", display: "flex", gap: 8 }}>
+                    <button className="btn sm soft" onClick={() => open({ k: "learn", lessonId: g.lessonId })}>
+                      🆕 Yod olish
+                    </button>
+                    {g.all.some((w) => isDueReview(w, today)) && (
+                      <button className="btn sm soft" onClick={() => open({ k: "review", lessonId: g.lessonId })}>
+                        🔁 Takrorlash
+                      </button>
+                    )}
+                  </div>
+                )}
+                {list.slice(0, 300).map((w) => {
+                  const st = wordState(w);
+                  return (
+                    <div key={w.id} className="row" style={{ cursor: "pointer" }} onClick={() => open({ k: "word", w })}>
+                      <span className="body">
+                        <span className="t" lang="ru">
+                          {w.ru} {w.gender && <span className="ru-g">{GTAG[w.gender]}</span>}
+                        </span>
+                        <span className="m">{w.uz}</span>
+                      </span>
+                      <SpeakBtn text={w.ru} />
+                      <span className={"ru-st " + st}>{st === "learning" ? (isDueReview(w, today) ? "bugun" : ivlLabel(Math.round((Date.parse(w.due) - Date.parse(today)) / 86400000))) : STATE_LABEL[st]}</span>
+                    </div>
+                  );
+                })}
+              </>
+            )}
+          </div>
+        );
+      })}
     </>
   );
 }
@@ -1080,8 +1071,22 @@ function LessonView({ l, onClose }: { l: RuLesson; onClose: () => void }) {
             ))}
           </div>
         )}
-        <button className="btn brand block" onClick={() => open({ k: "gen", lessonId: lesson.id })}>
-          ✨ Shu dars bo&apos;yicha yangi mashqlar
+        {words.length > 0 && (
+          <div className="foot">
+            {words.some((w) => w.reps === 0) && (
+              <button className="btn brand" onClick={() => open({ k: "learn", lessonId: lesson.id })}>
+                🆕 So&apos;zlarni yod olish ({words.filter((w) => w.reps === 0).length})
+              </button>
+            )}
+            {words.some((w) => isDueReview(w, todayStr())) && (
+              <button className="btn soft" onClick={() => open({ k: "review", lessonId: lesson.id })}>
+                🔁 Takrorlash
+              </button>
+            )}
+          </div>
+        )}
+        <button className="btn soft block" onClick={() => open({ k: "gen", lessonId: lesson.id })}>
+          ✨ Shu dars bo&apos;yicha yangi AI mashqlar
         </button>
         <div className="foot">
           <button className="btn soft left" onClick={() => setDel(true)} aria-label="O'chirish">
@@ -1248,9 +1253,36 @@ function RuSettings({ me, setMe, onClose }: { me: Me; setMe: (m: Me) => void; on
     const m = 8 * 60 + i * 30;
     return `${String(Math.floor(m / 60)).padStart(2, "0")}:${m % 60 ? "30" : "00"}`;
   });
+  const [ap, setAp] = useState(autoplay());
   return (
     <Sheet title="Rus tili sozlamalari" onClose={onClose}>
       <div className="form">
+        <Field label="Kuniga nechta yangi so'z" htmlFor="rdn" hint="15 ta — o'rtacha, 20–30 — tezlashtirilgan. Ko'p olsangiz, ertangi takrorlash ham ko'payadi.">
+          <select id="rdn" value={me.ru_daily_new ?? 15} onChange={(e) => save({ ru_daily_new: Number(e.target.value) })}>
+            {[5, 10, 15, 20, 30, 50].map((n) => (
+              <option key={n} value={n}>
+                {n} ta
+              </option>
+            ))}
+          </select>
+        </Field>
+        {canSpeak() && (
+          <label className="row" style={{ background: "var(--surface-2)", borderRadius: 14, cursor: "pointer" }}>
+            <span className="body">
+              <span className="t">🔊 So&apos;zni avtomatik o&apos;qish</span>
+              <span className="m">Kartochka chiqqanda talaffuzini eshitasiz</span>
+            </span>
+            <input
+              type="checkbox"
+              checked={ap}
+              onChange={(e) => {
+                setAp(e.target.checked);
+                setAutoplay(e.target.checked);
+              }}
+              style={{ width: 22, height: 22, accentColor: "var(--brand)" }}
+            />
+          </label>
+        )}
         <label className="row" style={{ background: "var(--surface-2)", borderRadius: 14, cursor: "pointer" }}>
           <span className="body">
             <span className="t">Takrorlash eslatmasi</span>
@@ -1268,7 +1300,7 @@ function RuSettings({ me, setMe, onClose }: { me: Me; setMe: (m: Me) => void; on
           </Field>
         )}
         <p style={{ margin: 0, fontSize: 13, color: "var(--muted)" }}>
-          Botga dars rasmini yuborsangiz — dars, so&apos;zlar va mashqlar avtomatik qo&apos;shiladi. So&apos;z qo&apos;shish: <code>/soz книга - kitob</code>
+          Botda: <code>/test</code> — Telegram ichida 5 ta savol, <code>/soz книга - kitob</code> — so&apos;z qo&apos;shish, <code>/rus</code> — bugungi holat.
         </p>
         <button className="btn soft" onClick={onClose}>
           Tayyor

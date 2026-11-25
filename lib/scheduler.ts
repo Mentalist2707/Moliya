@@ -225,10 +225,10 @@ async function extrasSection(u: User, date: string): Promise<string | null> {
   // Rus tili
   if (u.ru_enabled) {
     const st = await ruStatus(uid, date).catch(() => null);
-    if (st && (st.due || st.homework.length)) {
+    if (st && (st.due || st.fresh || st.homework.length)) {
       if (L.length) L.push("");
       L.push(
-        `<b>🇷🇺 Rus tili</b>: ${st.due ? `${st.due} ta so'z takrorlash` : "takrorlash yo'q"}` +
+        `<b>🇷🇺 Rus tili</b>: ${st.due ? `${st.due} ta so'z takrorlash` : "takrorlash yo'q"}${st.fresh ? ` · ${st.fresh} ta yangi so'z` : ""}` +
           (st.homework.length ? `\n📌 Uy vazifasi: ${st.homework.map((h) => esc(h.homework)).join("; ")}` : "")
       );
     }
@@ -368,14 +368,15 @@ export async function tick(appUrl: string, opts: { now?: number; fallback?: bool
     const uid = Number(u.id);
     const key = `ru:${date}`;
     const st = await ruStatus(uid, date);
-    if (st.reviewedToday > 0 || (!st.due && !st.homework.length)) continue;
+    if (st.reviewedToday > 0 || (!st.due && !st.fresh && !st.homework.length)) continue;
     if (!(await claim(uid, key))) continue;
     const text =
       `🇷🇺 <b>Rus tili</b>\n` +
       (st.due ? `🔁 Bugun <b>${st.due} ta so'z</b> takrorlash kerak — 5 daqiqa yetadi.` : "Bugun hali mashq qilmadingiz.") +
+      (st.fresh ? `\n🆕 ${st.fresh} ta yangi so'z kutmoqda.` : "") +
       (st.homework.length ? `\n\n📌 Uy vazifasi:\n${st.homework.map((h) => `• ${esc(h.homework)}`).join("\n")}` : "");
     res.preview?.push({ uid, kind: "ru", text });
-    const ok = await send(uid, text, { reply_markup: { inline_keyboard: [[{ text: "🔁 Takrorlash", web_app: { url: appUrl + "/#rus" } }]] } });
+    const ok = await send(uid, text, { reply_markup: { inline_keyboard: [[{ text: "🔁 Takrorlash", web_app: { url: appUrl + "/#rus" } }], [{ text: "🎯 Shu yerda test", callback_data: "rt" }]] } });
     if (!ok) await release(uid, key);
   }
 

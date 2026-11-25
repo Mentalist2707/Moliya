@@ -14,6 +14,7 @@ export type RuWord = {
   lapses: number;
   due: string;
   last_seen: string | null;
+  learned_at: string | null;
 };
 export type RuGrammar = { title: string; rule: string; examples?: { ru: string; uz: string }[] };
 export type RuLesson = {
@@ -180,3 +181,20 @@ export function cleanPack(raw: Record<string, unknown>): RuPack {
     exercises: cleanItems(raw.exercises),
   };
 }
+
+/** "читать / прочитать", "час, часы" → har bir variant */
+export function variants(ru: string): string[] {
+  return ru
+    .split(/[\/,;]/)
+    .map((x) => x.trim())
+    .filter(Boolean);
+}
+
+export type WordState = "new" | "learning" | "known";
+export function wordState(w: Pick<RuWord, "reps" | "ivl">): WordState {
+  if (w.reps === 0) return "new";
+  return w.ivl >= 21 ? "known" : "learning";
+}
+export const STATE_LABEL: Record<WordState, string> = { new: "yangi", learning: "o'rganilmoqda", known: "yod" };
+
+export const isDueReview = (w: Pick<RuWord, "reps" | "due">, today: string) => w.reps > 0 && w.due.slice(0, 10) <= today;

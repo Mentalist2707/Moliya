@@ -405,6 +405,21 @@ const MIGRATE_V7 = `
   );
 `;
 
+// So'z yodlash: birinchi marta o'rganilgan sana, kunlik yangi so'z limiti, Telegram testlari
+const MIGRATE_V8 = `
+  ALTER TABLE ru_words ADD COLUMN IF NOT EXISTS learned_at DATE;
+  UPDATE ru_words SET learned_at = last_seen WHERE learned_at IS NULL AND reps > 0;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS ru_daily_new SMALLINT NOT NULL DEFAULT 15;
+  CREATE TABLE IF NOT EXISTS ru_polls (
+    poll_id TEXT PRIMARY KEY,
+    user_id BIGINT NOT NULL,
+    word_id INTEGER NOT NULL,
+    correct SMALLINT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  );
+`;
+
+
 
 async function migrate(p: Pool) {
   await p.query(SCHEMA);
@@ -414,6 +429,7 @@ async function migrate(p: Pool) {
   await p.query(MIGRATE_V5);
   await p.query(MIGRATE_V6);
   await p.query(MIGRATE_V7);
+  await p.query(MIGRATE_V8);
   // Avvalgi (bir kishilik) versiyadagi ma'lumotlarni egasiga biriktirish
   const owner = Number(process.env.TELEGRAM_OWNER_ID || 0);
   if (owner) {

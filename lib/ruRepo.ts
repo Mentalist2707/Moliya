@@ -91,8 +91,10 @@ export async function gradeWord(uid: number, id: number, grade: 0 | 1 | 2 | 3, t
   if (!w) throw new Error("Topilmadi");
   const n = schedule({ ease: Number(w.ease), ivl: Number(w.ivl), reps: Number(w.reps), lapses: Number(w.lapses) }, grade);
   await db.query(
-    `UPDATE ru_words SET ease=$3, ivl=$4, reps=$5, lapses=$6, due=$7::date + $4::int, last_seen=$7 WHERE id=$1 AND user_id=$2`,
-    [id, uid, n.ease, n.ivl, n.reps, n.lapses, today]
+    `UPDATE ru_words SET ease=$3, ivl=$4, reps=$5, lapses=$6, due=$7::date + $4::int, last_seen=$7,
+       learned_at = CASE WHEN $8 THEN COALESCE(learned_at, $7::date) ELSE learned_at END
+     WHERE id=$1 AND user_id=$2`,
+    [id, uid, n.ease, n.ivl, n.reps, n.lapses, today, grade > 0]
   );
   await logReview(uid, today, 1, grade > 0 ? 1 : 0);
   return n;
@@ -176,13 +178,68 @@ export async function savePack(uid: number, pack: RuPack, opts: { date: string; 
   return { lessonId, added, setId };
 }
 
+/** Yangi so'zlarni "o'rganildi" deb belgilash: ertaga birinchi takrorlash */
+export async function learnWords(uid: number, ids: number[], today: string) {
+  const list = ids.map(Number).filter((x) => Number.isInteger(x) && x > 0).slice(0, 50);
+  if (!list.length) return 0;
+  const db = await getDb();
+  const r = await db.query(
+    `UPDATE ru_words SET reps = GREATEST(reps, 1), ivl = GREATEST(ivl, 1), due = $3::date + 1, last_seen = $3,
+       learned_at = COALESCE(learned_at, $3::date)
+     WHERE user_id=$1 AND id = ANY($2::int[]) AND reps = 0`,
+    [uid, list, today]
+  );
+  await logReview(uid, today, list.length, list.length);
+  return r.rowCount ?? 0;
+}
+
 /** Bot va eslatmalar uchun qisqa holat */
 export async function ruStatus(uid: number, today: string) {
   const db = await getDb();
-  const [due, hw, rev] = await Promise.all([
-    db.query("SELECT count(*)::int AS n FROM ru_words WHERE user_id=$1 AND due <= $2", [uid, today]).then((r) => Number(r.rows[0].n)),
+  const [due, fresh, hw, rev] = await Promise.all([
+    db.query("SELECT count(*)::int AS n FROM ru_words WHERE user_id=$1 AND reps > 0 AND due <= $2", [uid, today]).then((r) => Number(r.rows[0].n)),
+    db
+      .query(
+        `SELECT LEAST((SELECT count(*) FROM ru_words WHERE user_id=$1 AND reps = 0),
+                GREATEST(0, (SELECT ru_daily_new FROM users WHERE id=$1) - (SELECT count(*) FROM ru_words WHERE user_id=$1 AND learned_at = $2)))::int AS n`,
+        [uid, today]
+      )
+      .then((r) => Number(r.rows[0].n)),
     db.query("SELECT topic, homework FROM ru_lessons WHERE user_id=$1 AND hw_done=0 AND COALESCE(homework,'')<>'' ORDER BY date DESC LIMIT 3", [uid]).then((r) => r.rows as { topic: string; homework: string }[]),
     db.query("SELECT reviews FROM ru_log WHERE user_id=$1 AND date=$2", [uid, today]).then((r) => Number(r.rows[0]?.reviews ?? 0)),
   ]);
-  return { due, homework: hw, reviewedToday: rev };
+  return { due, fresh, homework: hw, reviewedToday: rev };
+}
+
+/* ---------- Telegram testlari (quiz poll) ---------- */
+export async function pickQuizWords(uid: number, today: string, n = 5) {
+  const db = await getDb();
+  // Avval takrorlash vaqti kelganlar, keyin o'rganilganlardan tasodifiy
+  const due = (await db.query("SELECT id, ru, uz, example FROM ru_words WHERE user_id=$1 AND reps > 0 AND due <= $2 ORDER BY random() LIMIT $3", [uid, today, n])).rows;
+  const rest = due.length < n
+    ? (await db.query("SELECT id, ru, uz, example FROM ru_words WHERE user_id=$1 AND reps > 0 AND NOT (id = ANY($2::int[])) ORDER BY random() LIMIT $3", [uid, due.map((w) => w.id), n - due.length])).rows
+    : [];
+  const words = [...due, ...rest] as { id: number; ru: string; uz: string; example: string | null }[];
+  const pool = (await db.query("SELECT uz FROM ru_words WHERE user_id=$1 ORDER BY random() LIMIT 60", [uid])).rows.map((r) => String(r.uz));
+  return { words, pool };
+}
+
+export async function savePoll(uid: number, pollId: string, wordId: number, correct: number) {
+  const db = await getDb();
+  await db.query("INSERT INTO ru_polls (poll_id, user_id, word_id, correct) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING", [pollId, uid, wordId, correct]);
+  await db.query("DELETE FROM ru_polls WHERE created_at < now() - interval '3 days'");
+}
+
+/** Telegram testiga javob: to'g'ri bo'lsa va takrorlash vaqti kelgan bo'lsa — "Esimda", xato bo'lsa — "Esimda yo'q" */
+export async function answerPoll(pollId: string, uid: number, option: number, today: string) {
+  const db = await getDb();
+  const p = (await db.query("DELETE FROM ru_polls WHERE poll_id=$1 AND user_id=$2 RETURNING word_id, correct", [pollId, uid])).rows[0];
+  if (!p) return;
+  const ok = Number(p.correct) === option;
+  const w = (await db.query("SELECT due FROM ru_words WHERE id=$1 AND user_id=$2", [p.word_id, uid])).rows[0];
+  if (!w) return;
+  const isDue = String(w.due).slice(0, 10) <= today;
+  if (!ok) await gradeWord(uid, Number(p.word_id), 0, today);
+  else if (isDue) await gradeWord(uid, Number(p.word_id), 2, today);
+  else await logReview(uid, today, 1, 1);
 }

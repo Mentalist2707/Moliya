@@ -43,7 +43,7 @@ export async function GET(req: Request) {
   const webhook = await tg("setWebhook", {
     url: `${url}/api/telegram/webhook`,
     secret_token: process.env.TELEGRAM_WEBHOOK_SECRET,
-    allowed_updates: ["message", "callback_query"],
+    allowed_updates: ["message", "callback_query", "poll_answer"],
     drop_pending_updates: true,
   });
   const menu = await tg("setChatMenuButton", {
@@ -71,6 +71,7 @@ export async function GET(req: Request) {
         commands: [
           ...BASE.slice(0, 1),
           { command: "rus", description: "Rus tili: takrorlash va uy vazifasi" },
+          { command: "test", description: "So'z testi (5 ta savol)" },
           { command: "soz", description: "So'z qo'shish: /soz книга - kitob" },
           ...BASE.slice(1),
         ],

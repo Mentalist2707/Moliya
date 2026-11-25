@@ -388,3 +388,37 @@ input.huge.bad { border-color: var(--bad) !important; }
 .ru-tbl tr:last-child td { border-bottom: 0; }
 .ru-note { margin: 0; font-size: 13px; color: var(--muted); line-height: 1.45; }
 .form .link { background: none; border: 0; color: var(--brand); font: inherit; font-weight: 600; font-size: 14px; cursor: pointer; padding: 4px 0; }
+.ru-speak { display: inline-grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; background: var(--surface-2); font-size: 16px; cursor: pointer; vertical-align: middle; flex: none; user-select: none; }
+.ru-speak.big { width: 44px; height: 44px; font-size: 20px; }
+.ru-card .ru-speak { background: color-mix(in srgb, var(--surface) 70%, transparent); }
+.ru-stack { height: 8px; border-radius: 99px; background: var(--surface-2); display: flex; overflow: hidden; }
+.ru-stack b { display: block; height: 100%; transition: width .3s; }
+.ru-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--muted); }
+.ru-legend i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; border: 1px solid var(--line); }
+.ru-today { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.ru-today button { border: 1.5px solid var(--line); background: var(--surface); border-radius: 16px; padding: 12px; display: grid; gap: 2px; text-align: left; font: inherit; color: inherit; cursor: pointer; }
+.ru-today button.hot { border-color: var(--brand); background: color-mix(in srgb, var(--brand) 8%, var(--surface)); }
+.ru-today b { font-size: 20px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.ru-today span { font-size: 12px; color: var(--muted); }
+.ru-actions.four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.ru-actions.four span { font-size: 12px; }
+.ru-task { color: var(--muted); font-weight: 600; font-size: 13px; }
+.ru-prompt { font-size: 30px; font-weight: 800; letter-spacing: -0.02em; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; overflow-wrap: anywhere; }
+.ru-exline { color: var(--muted); display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: center; }
+.ru-dots { display: flex; gap: 6px; justify-content: center; }
+.ru-dots i { width: 8px; height: 8px; border-radius: 50%; background: var(--surface-2); }
+.ru-dots i.on { background: var(--brand); }
+.ru-match { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.ru-match > div { display: grid; gap: 8px; align-content: start; }
+.ru-match button { border: 1.5px solid var(--line); background: var(--surface); border-radius: 14px; padding: 14px 10px; min-height: 56px; font: inherit; font-weight: 600; font-size: 15px; color: var(--ink); cursor: pointer; overflow-wrap: anywhere; transition: opacity .25s, transform .15s; }
+.ru-match button.sel { border-color: var(--brand); background: color-mix(in srgb, var(--brand) 10%, var(--surface)); }
+.ru-match button.bad { border-color: var(--bad); background: color-mix(in srgb, var(--bad) 12%, var(--surface)); animation: shake .3s; }
+.ru-match button.gone { opacity: 0; pointer-events: none; transform: scale(.9); }
+.ru-match button:disabled:not(.gone) { opacity: .75; cursor: default; }
+@keyframes shake { 25% { transform: translateX(-4px); } 75% { transform: translateX(4px); } }
+.ru-group { width: 100%; border: 0; background: none; font: inherit; color: inherit; display: flex; align-items: center; gap: 12px; padding: 14px 14px 10px; text-align: left; cursor: pointer; }
+.ru-group small { color: var(--muted); font-size: 12px; }
+.ru-chev { font-size: 22px; color: var(--muted); width: 24px; text-align: center; }
+.ru-st { font-size: 11px; font-weight: 700; white-space: nowrap; padding: 3px 8px; border-radius: 99px; background: var(--surface-2); color: var(--muted); }
+.ru-st.known { background: color-mix(in srgb, var(--money) 16%, transparent); color: var(--money); }
+.ru-st.learning { background: color-mix(in srgb, var(--warn) 16%, transparent); color: var(--ink); }
