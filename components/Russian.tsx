@@ -1,28 +1,38 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+/**
+ * Rus tili 2.0 — o'yin uslubidagi so'z yodlash:
+ *  O'rganish: kunlik maqsad, streak, daraja, bitta "Davom etish" tugmasi va bosqichlar yo'li
+ *  Lug'at:    barcha so'zlar, qidiruv, tahrirlash
+ *  Natijalar: haftalik XP, aniqlik, qiyin so'zlar
+ */
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { todayStr } from "@/lib/format";
 import {
-  almost, GENDER_LABEL, isCorrect, isDueReview, ivlLabel, ruStreak, shuffle, STATE_LABEL, wordState,
-  type RuData, type RuItem, type RuLesson, type RuPack, type RuSet, type RuWord, type WordState,
+  buildUnits, GENDER_LABEL, isDueReview, ruStreak, shuffle, STATE_LABEL, wordState, xpLevel,
+  type RuData, type RuUnit, type RuWord, type WordState,
 } from "@/lib/ru";
-import { GRAMMAR } from "@/lib/ruGrammar";
-import { api, Bar, Chips, Confirm, Empty, Field, Foot, Seg, Sheet, useStore, useSubmit } from "./ui";
+import { api, Chips, Confirm, Empty, Field, Foot, Seg, Sheet, useStore, useSubmit } from "./ui";
 import { I } from "./icons";
 import type { Me } from "./Settings";
-import { autoplay, canSpeak, post, RuCtx, setAutoplay, useRu, type Ctx, type Open } from "./ruCtx";
-import { LearnSheet, MatchGame, ReviewSheet, SpeakBtn, StackBar, useDayCounts } from "./RuVocab";
+import { autoplay, canSpeak, post, setAutoplay, speak } from "./ruCtx";
+import Session, { setSfx, sfxOn, type SessionKind } from "./RuSession";
 
-type Sub = "bugun" | "sozlar" | "darslar" | "grammatika";
+type Sub = "learn" | "dict" | "stats";
+type Run = { kind: SessionKind; title: string; words: RuWord[] };
 
 const GTAG: Record<string, string> = { m: "м", f: "ж", n: "ср", pl: "мн" };
+const dayAdd = (d: string, n: number) => new Date(Date.parse(d + "T00:00:00Z") + n * 86400000).toISOString().slice(0, 10);
 
 export default function Russian({ me, setMe }: { me: Me | null; setMe: (m: Me) => void }) {
-  const { toast, haptic } = useStore();
+  const { toast } = useStore();
   const [r, setR] = useState<RuData | null>(null);
   const [err, setErr] = useState("");
-  const [sub, setSub] = useState<Sub>("bugun");
-  const [o, setO] = useState<Open>(null);
+  const [sub, setSub] = useState<Sub>("learn");
+  const [run, setRun] = useState<Run | null>(null);
+  const [settings, setSettings] = useState(false);
+  const [edit, setEdit] = useState<RuWord | "new" | null>(null);
+
   const reload = useCallback(async () => {
     try {
       setR(await api<RuData>("/api/ru"));
@@ -34,37 +44,31 @@ export default function Russian({ me, setMe }: { me: Me | null; setMe: (m: Me) =
   useEffect(() => {
     reload();
   }, [reload]);
-  const run = useCallback(
-    async (fn: () => Promise<unknown>, msg?: string) => {
-      try {
-        await fn();
-        await reload();
-        if (msg) {
-          toast(msg);
-          haptic("success");
-        }
-      } catch (e) {
-        toast("Xatolik: " + (e as Error).message);
-      }
-    },
-    [reload, toast, haptic]
-  );
+
+  const today = todayStr();
+  const units = useMemo(() => (r ? buildUnits(r.words, r.lessons) : []), [r]);
+  const xpToday = Number(r?.log.find((l) => l.date.slice(0, 10) === today)?.xp ?? 0);
+  const xpTotal = r?.log.reduce((a, l) => a + Number(l.xp ?? 0), 0) ?? 0;
+  const goal = me?.ru_daily_xp || 50;
 
   if (err) return <div className="card"><Empty emoji="⚠️" text={err} btn="Qayta urinish" onAdd={reload} /></div>;
   if (!r) return <div className="card"><Empty emoji="⏳" text="Yuklanmoqda…" /></div>;
-  const ctx: Ctx = { r, me, reload, open: setO, run };
-  const close = () => setO(null);
+
+  const start = (kind: SessionKind, title: string, words: RuWord[]) => {
+    if (!words.length) return toast("Bu yerda hozircha so'z yo'q");
+    setRun({ kind, title, words });
+  };
 
   return (
-    <RuCtx.Provider value={ctx}>
+    <>
       <div className="ph">
         <div>
           <h1>Rus tili</h1>
           <p>
-            {r.words.length} ta so&apos;z · {r.lessons.length} ta dars
+            {r.words.length} ta so&apos;z · {units.length} ta bo&apos;lim
           </p>
         </div>
-        <button className="more" aria-label="Sozlamalar" onClick={() => setO({ k: "settings" })}>
+        <button className="more" aria-label="Sozlamalar" onClick={() => setSettings(true)}>
           <I.gear />
         </button>
       </div>
@@ -73,805 +77,255 @@ export default function Russian({ me, setMe }: { me: Me | null; setMe: (m: Me) =
         value={sub}
         onChange={setSub}
         options={[
-          { v: "bugun", t: "Bugun" },
-          { v: "sozlar", t: "So'zlar" },
-          { v: "darslar", t: "Darslar" },
-          { v: "grammatika", t: "Qoidalar" },
+          { v: "learn", t: "O'rganish" },
+          { v: "dict", t: "Lug'at" },
+          { v: "stats", t: "Natijalar" },
         ]}
       />
-      {sub === "bugun" && <TodayTab />}
-      {sub === "sozlar" && <WordsTab />}
-      {sub === "darslar" && <LessonsTab />}
-      {sub === "grammatika" && <GrammarTab />}
-      {(sub === "sozlar" || sub === "darslar") && (
-        <button className="fab" aria-label="Qo'shish" onClick={() => setO(sub === "sozlar" ? { k: "word" } : { k: "lessonForm" })}>
+      {sub === "learn" && <Learn r={r} units={units} today={today} xpToday={xpToday} xpTotal={xpTotal} goal={goal} start={start} />}
+      {sub === "dict" && <Dict r={r} units={units} onEdit={setEdit} start={start} />}
+      {sub === "stats" && <Stats r={r} today={today} xpTotal={xpTotal} goal={goal} start={start} />}
+      {sub === "dict" && (
+        <button className="fab" aria-label="So'z qo'shish" onClick={() => setEdit("new")}>
           <I.plus />
         </button>
       )}
 
-      {o?.k === "review" && <ReviewSheet lessonId={o.lessonId} onClose={close} />}
-      {o?.k === "learn" && <LearnSheet lessonId={o.lessonId} onClose={close} />}
-      {o?.k === "match" && <MatchGame onClose={close} />}
-      {o?.k === "photo" && <PhotoSheet onClose={close} />}
-      {o?.k === "gen" && <GenSheet lessonId={o.lessonId} onClose={close} />}
-      {o?.k === "quiz" && <WordQuiz onClose={close} />}
-      {o?.k === "set" && <SetSheet id={o.id} onClose={close} />}
-      {o?.k === "word" && <WordForm w={o.w} onClose={close} />}
-      {o?.k === "lesson" && <LessonView l={o.l} onClose={close} />}
-      {o?.k === "lessonForm" && <LessonForm l={o.l} onClose={close} />}
-      {o?.k === "settings" && me && <RuSettings me={me} setMe={setMe} onClose={close} />}
-    </RuCtx.Provider>
-  );
-}
-
-/* ============================== Bugun ============================== */
-function TodayTab() {
-  const { r, open, run } = useRu();
-  const today = todayStr();
-  const { limit, learnedToday, newLeft, newTotal, due } = useDayCounts();
-  const { streak } = ruStreak(r.log, today);
-  const known = r.words.filter((w) => wordState(w) === "known").length;
-  const learning = r.words.filter((w) => wordState(w) === "learning").length;
-  const hw = r.lessons.filter((l) => l.homework && !l.hw_done);
-  const sets = r.sets.slice(0, 8);
-  const last7 = r.log.filter((l) => l.date.slice(0, 10) > new Date(Date.parse(today) - 7 * 86400000).toISOString().slice(0, 10));
-  const rev7 = last7.reduce((a, l) => a + l.reviews, 0);
-  const acc = rev7 ? Math.round((last7.reduce((a, l) => a + l.correct, 0) / rev7) * 100) : null;
-  const lessonsW = r.lessons.map((l) => ({ l, ws: r.words.filter((w) => w.lesson_id === l.id) })).filter((x) => x.ws.length);
-  const goalDone = due === 0 && (newLeft === 0 || learnedToday >= limit);
-
-  return (
-    <>
-      <div className="card" style={{ display: "grid", gap: 14 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-          <div style={{ flex: 1, display: "grid", gap: 2 }}>
-            <span style={{ fontSize: 26, fontWeight: 800, letterSpacing: "-0.02em", color: streak ? "var(--brand)" : "var(--muted)" }}>🔥 {streak} kun</span>
-            <span style={{ fontSize: 13, color: "var(--muted)" }}>{goalDone ? "Bugungi reja bajarildi ✓" : "Har kuni ozgina — eng yaxshi usul"}{acc !== null ? ` · 7 kunda ${acc}% to'g'ri` : ""}</span>
-          </div>
-          <div style={{ textAlign: "right" }}>
-            <div className="num" style={{ fontSize: 22, fontWeight: 800 }}>
-              {known}
-              <small style={{ fontSize: 14, color: "var(--muted)", fontWeight: 600 }}>/{r.words.length}</small>
-            </div>
-            <div style={{ fontSize: 12, color: "var(--muted)" }}>yod bo&apos;lgan</div>
-          </div>
-        </div>
-        <div style={{ display: "grid", gap: 6 }}>
-          <StackBar words={r.words} />
-          <div className="ru-legend">
-            <span><i style={{ background: "var(--money)" }} />yod {known}</span>
-            <span><i style={{ background: "var(--warn)" }} />o&apos;rganilmoqda {learning}</span>
-            <span><i style={{ background: "var(--surface-2)" }} />yangi {newTotal}</span>
-          </div>
-        </div>
-        <div className="ru-today">
-          <button className={due ? "hot" : ""} onClick={() => open({ k: "review" })}>
-            <b>🔁 {due}</b>
-            <span>takrorlash</span>
-          </button>
-          <button className={!due && newLeft ? "hot" : ""} onClick={() => open({ k: "learn" })}>
-            <b>
-              🆕 {learnedToday}/{limit}
-            </b>
-            <span>yangi so&apos;z bugun</span>
-          </button>
-        </div>
-        {due > 0 ? (
-          <button className="btn brand block" onClick={() => open({ k: "review" })}>
-            🔁 Takrorlash — {due} ta so&apos;z
-          </button>
-        ) : newLeft > 0 ? (
-          <button className="btn brand block" onClick={() => open({ k: "learn" })}>
-            🆕 Yangi so&apos;zlarni o&apos;rganish — {Math.min(7, newLeft)} ta
-          </button>
-        ) : (
-          <button className="btn soft block" onClick={() => open({ k: "match" })}>
-            🧩 Juftlash o&apos;yini — mustahkamlash
-          </button>
-        )}
-        <div className="ru-actions four">
-          <button onClick={() => open({ k: "match" })} disabled={r.words.length < 4}>
-            <b>🧩</b>
-            <span>Juftlash</span>
-          </button>
-          <button onClick={() => open({ k: "quiz" })} disabled={r.words.length < 4}>
-            <b>📝</b>
-            <span>Test</span>
-          </button>
-          <button onClick={() => open({ k: "photo" })}>
-            <b>📷</b>
-            <span>Rasmdan</span>
-          </button>
-          <button onClick={() => open({ k: "gen" })}>
-            <b>✨</b>
-            <span>AI mashq</span>
-          </button>
-        </div>
-      </div>
-
-      {lessonsW.length > 0 && (
-        <div className="card flush">
-          <h2>📘 Darslar bo&apos;yicha</h2>
-          {lessonsW.map(({ l, ws }) => {
-            const k = ws.filter((w) => wordState(w) === "known").length;
-            const n = ws.filter((w) => w.reps === 0).length;
-            const d = ws.filter((w) => isDueReview(w, today)).length;
-            return (
-              <button key={l.id} className="row" style={{ width: "100%", background: "none", border: 0, font: "inherit", color: "inherit", textAlign: "left", cursor: "pointer" }} onClick={() => open({ k: "lesson", l })}>
-                <span className="body" style={{ gap: 6 }}>
-                  <span className="t">{l.topic}</span>
-                  <StackBar words={ws} />
-                  <span className="m">
-                    {ws.length} so&apos;z · yod {k}
-                    {n ? ` · yangi ${n}` : ""}
-                    {d ? <b style={{ color: "var(--brand)" }}>takrorlash {d}</b> : null}
-                  </span>
-                </span>
-              </button>
-            );
-          })}
-        </div>
+      {run && (
+        <Session
+          {...run}
+          pool={r.words}
+          goal={goal}
+          xpToday={xpToday}
+          onSaved={reload}
+          onClose={() => {
+            setRun(null);
+            reload();
+          }}
+        />
       )}
-
-      {hw.length > 0 && (
-        <div className="card flush">
-          <h2>📌 Uy vazifasi</h2>
-          {hw.map((l) => (
-            <div key={l.id} className="row">
-              <button
-                className="check"
-                role="checkbox"
-                aria-checked={false}
-                aria-label="Bajarildi"
-                onClick={() => run(() => post({ action: "lesson.hw", id: l.id, done: true }), "Uy vazifasi bajarildi ✅")}
-              />
-              <button className="body" style={{ textAlign: "left", background: "none", border: 0, font: "inherit", color: "inherit", cursor: "pointer" }} onClick={() => open({ k: "lesson", l })}>
-                <span className="t">{l.homework}</span>
-                <span className="m">
-                  {l.topic} · {fmtDate(l.date)}
-                </span>
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-
-      <div className="card flush">
-        <h2>
-          ✨ Mashqlar
-          {r.sets.length > 0 && (
-            <button className="link" onClick={() => open({ k: "gen" })}>
-              + Yangi
-            </button>
-          )}
-        </h2>
-        {sets.length === 0 ? (
-          <Empty emoji="📷" text="Dars rasmini yuboring — AI undan so'zlar, qoida va mashqlar tuzib beradi. Rasmni botga ham yuborsangiz bo'ladi." btn="Rasm yuklash" onAdd={() => open({ k: "photo" })} />
-        ) : (
-          sets.map((s) => <SetRow key={s.id} s={s} />)
-        )}
-      </div>
+      {edit && <WordForm w={edit === "new" ? undefined : edit} units={units} onClose={() => setEdit(null)} onSaved={reload} />}
+      {settings && me && <RuSettings me={me} setMe={setMe} onClose={() => setSettings(false)} />}
     </>
   );
 }
 
-function SetRow({ s }: { s: RuSet }) {
-  const { open } = useRu();
-  const pct = s.total ? Math.round(((s.score ?? 0) / s.total) * 100) : null;
-  return (
-    <button className="row" style={{ width: "100%", background: "none", border: 0, font: "inherit", color: "inherit", textAlign: "left", cursor: "pointer" }} onClick={() => open({ k: "set", id: s.id })}>
-      <span className="ru-ic">{pct === null ? "▶" : pct >= 80 ? "🏆" : pct >= 50 ? "👍" : "🔁"}</span>
-      <span className="body">
-        <span className="t">{s.title}</span>
-        <span className="m">
-          {s.items.length} ta mashq · {fmtDate(s.created_at)}
-          {pct !== null && <b style={{ color: pct >= 80 ? "var(--money)" : pct >= 50 ? "var(--ink)" : "var(--warn)" }}>{pct}%</b>}
-        </span>
-      </span>
-      <span className="pill">{pct === null ? "Boshlash" : "Qayta"}</span>
-    </button>
-  );
-}
+/* ============================== O'rganish ============================== */
 
-/* ============================== Mashq bajarish (umumiy) ============================== */
-function Runner({ title, items, onFinish, onClose }: { title: string; items: RuItem[]; onFinish: (score: number, total: number) => void; onClose: () => void }) {
-  const { haptic } = useStore();
-  const [i, setI] = useState(0);
-  const [val, setVal] = useState("");
-  const [picked, setPicked] = useState<number | null>(null);
-  const [res, setRes] = useState<null | boolean>(null);
-  const [score, setScore] = useState(0);
-  const [wrong, setWrong] = useState<{ it: RuItem; given: string }[]>([]);
-  const [finished, setFinished] = useState(false);
-  const inp = useRef<HTMLInputElement>(null);
-  const it = items[i];
+function Learn({
+  r, units, today, xpToday, xpTotal, goal, start,
+}: {
+  r: RuData; units: RuUnit[]; today: string; xpToday: number; xpTotal: number; goal: number;
+  start: (k: SessionKind, t: string, w: RuWord[]) => void;
+}) {
+  const { toast } = useStore();
+  const { streak } = ruStreak(r.log, today);
+  const lv = xpLevel(xpTotal);
+  const due = r.words.filter((w) => isDueReview(w, today)).sort((a, b) => a.due.localeCompare(b.due) || a.ivl - b.ivl);
+  const hard = r.words.filter((w) => w.lapses > 0 && w.reps > 0).sort((a, b) => b.lapses - a.lapses);
+  const learned = r.words.filter((w) => w.reps > 0);
+  const nextNode = units.flatMap((u) => u.nodes.filter((n) => n.state === "open").map((n) => ({ u, n })))[0];
+  const pct = Math.min(100, (xpToday / goal) * 100);
 
-  const check = (choice?: number) => {
-    if (res !== null || !it) return;
-    let ok: boolean;
-    let given: string;
-    if (it.type === "choice") {
-      ok = choice === it.answer;
-      given = it.options[choice ?? -1] ?? "";
-      setPicked(choice ?? null);
-    } else {
-      if (!val.trim()) return;
-      ok = isCorrect(val, it.answer, it.accept);
-      given = val;
-    }
-    haptic(ok ? "success" : "light");
-    setRes(ok);
-    if (ok) setScore((s) => s + 1);
-    else setWrong((w) => [...w, { it, given }]);
-  };
-  const override = () => {
-    setRes(true);
-    setScore((s) => s + 1);
-    setWrong((w) => w.slice(0, -1));
-  };
-  const next = () => {
-    if (i + 1 >= items.length) {
-      setFinished(true);
-      onFinish(score, items.length);
-      return;
-    }
-    setI(i + 1);
-    setVal("");
-    setPicked(null);
-    setRes(null);
-    setTimeout(() => inp.current?.focus(), 50);
-  };
-  const restart = () => {
-    setI(0);
-    setVal("");
-    setPicked(null);
-    setRes(null);
-    setScore(0);
-    setWrong([]);
-    setFinished(false);
-  };
+  // Asosiy tugma: avval takrorlash (xotira so'nmasin), keyin yangi bosqich
+  const main = due.length
+    ? { t: "Takrorlash", s: `${Math.min(due.length, 12)} ta so'z esdan chiqyapti`, go: () => start("review", "Takrorlash", due.slice(0, 12)) }
+    : nextNode
+      ? { t: "Davom etish", s: `${nextNode.u.title} · ${nextNode.n.idx + 1}-bosqich`, go: () => start("learn", `${nextNode.n.idx + 1}-bosqich`, nextNode.n.words.filter((w) => w.reps === 0)) }
+      : learned.length
+        ? { t: "Mashq qilish", s: "Hammasi o'rganilgan — mustahkamlaymiz", go: () => start("practice", "Mashq", shuffle(learned).slice(0, 8)) }
+        : null;
 
-  if (finished) {
-    const pct = Math.round((score / items.length) * 100);
-    return (
-      <Sheet title={title} onClose={onClose}>
-        <div className="form">
-          <div style={{ textAlign: "center", display: "grid", gap: 4, justifyItems: "center" }}>
-            <span style={{ fontSize: 56 }}>{pct >= 80 ? "🏆" : pct >= 50 ? "👍" : "💪"}</span>
-            <b style={{ fontSize: 28 }} className="num">
-              {score}/{items.length} · {pct}%
-            </b>
-            <span style={{ color: "var(--muted)" }}>{pct >= 80 ? "Zo'r natija!" : pct >= 50 ? "Yaxshi, xatolarni ko'rib chiqing" : "Qoidani yana bir ko'rib, qayta urinib ko'ring"}</span>
-          </div>
-          {wrong.length > 0 && (
-            <div style={{ display: "grid", gap: 8 }}>
-              <b>Xatolar ustida ishlash</b>
-              {wrong.map(({ it, given }, k) => (
-                <div key={k} className="ru-mistake">
-                  <span lang="ru">{it.q}</span>
-                  <span>
-                    <s style={{ color: "var(--bad)" }}>{given || "—"}</s> → <b style={{ color: "var(--money)" }}>{it.type === "choice" ? it.options[it.answer] : it.answer}</b>
-                  </span>
-                  {it.explain && <small>{it.explain}</small>}
-                </div>
-              ))}
-            </div>
-          )}
-          <div className="foot">
-            <button className="btn soft" onClick={restart}>
-              🔁 Qayta
-            </button>
-            <button className="btn brand" onClick={onClose}>
-              Tayyor
-            </button>
-          </div>
-        </div>
-      </Sheet>
-    );
-  }
-
-  return (
-    <Sheet title={title} onClose={onClose}>
-      <div className="form">
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <div style={{ flex: 1 }}>
-            <Bar pct={(i / items.length) * 100} color="var(--brand)" />
-          </div>
-          <span className="num" style={{ fontSize: 13, color: "var(--muted)" }}>
-            {i + 1}/{items.length}
-          </span>
-        </div>
-        <small style={{ color: "var(--muted)", fontWeight: 600 }}>
-          {it.type === "choice" ? "To'g'ri javobni tanlang" : it.type === "fill" ? "Bo'sh joyni to'ldiring" : "Rus tiliga tarjima qiling"}
-        </small>
-        <div className="ru-q" lang={it.type === "translate" ? "uz" : "ru"}>
-          {it.q}
-        </div>
-        {it.type === "fill" && it.hint && <small style={{ color: "var(--muted)" }}>💡 {it.hint}</small>}
-
-        {it.type === "choice" ? (
-          <div className="ru-opts">
-            {it.options.map((op, k) => (
-              <button
-                key={k}
-                lang="ru"
-                disabled={res !== null}
-                className={res === null ? "" : k === it.answer ? "ok" : k === picked ? "bad" : "dim"}
-                onClick={() => check(k)}
-              >
-                {op}
-              </button>
-            ))}
-          </div>
-        ) : (
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (res === null) check();
-              else next();
-            }}
-            className="form"
-          >
-            <input
-              ref={inp}
-              lang="ru"
-              data-autofocus
-              autoComplete="off"
-              autoCapitalize="off"
-              spellCheck={false}
-              className={"huge" + (res === true ? " ok" : res === false ? " bad" : "")}
-              value={val}
-              readOnly={res !== null}
-              onChange={(e) => setVal(e.target.value)}
-              placeholder="Javob…"
-            />
-            {res === null && (
-              <button className="btn brand block" type="submit" disabled={!val.trim()}>
-                Tekshirish
-              </button>
-            )}
-          </form>
-        )}
-
-        {res !== null && (
-          <div className={"ru-fb " + (res ? "ok" : "bad")} role="status">
-            <b>{res ? "✓ To'g'ri!" : it.type !== "choice" && almost(val, it.answer) ? "Deyarli! Bitta harf xato" : "✗ Noto'g'ri"}</b>
-            {!res && (
-              <span>
-                To&apos;g&apos;ri javob: <b lang="ru">{it.type === "choice" ? it.options[it.answer] : it.answer}</b>
-              </span>
-            )}
-            {it.explain && <small>{it.explain}</small>}
-            {!res && it.type !== "choice" && (
-              <button className="link" type="button" onClick={override}>
-                Men to&apos;g&apos;ri yozganman
-              </button>
-            )}
-          </div>
-        )}
-        {res !== null && (
-          <button className="btn brand block" onClick={next} autoFocus>
-            {i + 1 >= items.length ? "Natija" : "Keyingisi →"}
-          </button>
-        )}
-      </div>
-    </Sheet>
-  );
-}
-
-function SetSheet({ id, onClose }: { id: number; onClose: () => void }) {
-  const { r, reload } = useRu();
-  const s = r.sets.find((x) => x.id === id);
-  if (!s) return null;
-  return (
-    <Runner
-      title={s.title}
-      items={s.items}
-      onClose={() => {
-        reload();
-        onClose();
-      }}
-      onFinish={(score, total) => post({ action: "set.score", id: s.id, score, total }).catch(() => {})}
-    />
-  );
-}
-
-/** O'z so'zlaringizdan test (AI'siz) */
-function WordQuiz({ onClose }: { onClose: () => void }) {
-  const { r, reload } = useRu();
-  const items = useMemo<RuItem[]>(() => {
-    const pool = shuffle(r.words);
-    // Ko'p xato qilinganlarni oldinga
-    pool.sort((a, b) => b.lapses - a.lapses || a.ease - b.ease);
-    const pick = shuffle(pool.slice(0, 14)).slice(0, 10);
-    return pick.map((w, k) => {
-      const others = shuffle(r.words.filter((x) => x.id !== w.id)).slice(0, 3);
-      const kind = w.gender && k % 4 === 3 ? "gender" : k % 3 === 0 ? "type" : k % 2 ? "ru2uz" : "uz2ru";
-      if (kind === "gender") {
-        const opts = ["m", "f", "n", "pl"];
-        return { type: "choice", q: `«${w.ru}» — qaysi rod?`, options: opts.map((g) => GENDER_LABEL[g]), answer: opts.indexOf(w.gender!) } as RuItem;
-      }
-      if (kind === "type") return { type: "translate", q: w.uz, answer: w.ru, accept: w.ru.split("/").map((x) => x.trim()), explain: w.example ?? undefined } as RuItem;
-      const right = kind === "ru2uz" ? w.uz : w.ru;
-      const opts = shuffle([right, ...others.map((x) => (kind === "ru2uz" ? x.uz : x.ru))]);
-      return { type: "choice", q: kind === "ru2uz" ? `${w.ru} — tarjimasi?` : `«${w.uz}» ruscha qanday?`, options: opts, answer: opts.indexOf(right) } as RuItem;
-    });
-  }, [r.words]);
-  return (
-    <Runner
-      title="So'z testi"
-      items={items}
-      onClose={() => {
-        reload();
-        onClose();
-      }}
-      onFinish={(score, total) => post({ action: "quiz.done", correct: score, total }).catch(() => {})}
-    />
-  );
-}
-
-/* ============================== Rasmdan dars ============================== */
-async function shrink(file: File): Promise<{ data: string; type: "image/jpeg"; url: string }> {
-  const url = URL.createObjectURL(file);
-  const img = await new Promise<HTMLImageElement>((ok, bad) => {
-    const im = new Image();
-    im.onload = () => ok(im);
-    im.onerror = () => bad(new Error("Rasmni ochib bo'lmadi"));
-    im.src = url;
-  });
-  const max = 1800;
-  const k = Math.min(1, max / Math.max(img.width, img.height));
-  const c = document.createElement("canvas");
-  c.width = Math.round(img.width * k);
-  c.height = Math.round(img.height * k);
-  const g = c.getContext("2d")!;
-  g.fillStyle = "#fff";
-  g.fillRect(0, 0, c.width, c.height);
-  g.drawImage(img, 0, 0, c.width, c.height);
-  const data = c.toDataURL("image/jpeg", 0.85).split(",")[1];
-  return { data, type: "image/jpeg", url };
-}
-
-const WAIT = ["Rasm o'qilmoqda…", "So'zlar ajratilmoqda…", "Qoida tushuntirilmoqda…", "Mashqlar tuzilmoqda…", "Deyarli tayyor…"];
-
-function PhotoSheet({ onClose }: { onClose: () => void }) {
-  const { r, run, open } = useRu();
-  const [imgs, setImgs] = useState<{ data: string; type: "image/jpeg"; url: string }[]>([]);
-  const [hint, setHint] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [step, setStep] = useState(0);
-  const [err, setErr] = useState("");
-  const [pack, setPack] = useState<RuPack | null>(null);
-  const [keep, setKeep] = useState<Set<number>>(new Set());
-  const fileRef = useRef<HTMLInputElement>(null);
-  const known = useMemo(() => new Set(r.words.map((w) => w.ru.toLowerCase())), [r.words]);
-
-  useEffect(() => {
-    if (!busy) return;
-    const t = setInterval(() => setStep((s) => Math.min(WAIT.length - 1, s + 1)), 9000);
-    return () => clearInterval(t);
-  }, [busy]);
-
-  const add = async (files: FileList | null) => {
-    if (!files) return;
-    setErr("");
-    try {
-      const out = await Promise.all(Array.from(files).slice(0, 4 - imgs.length).map(shrink));
-      setImgs((x) => [...x, ...out].slice(0, 4));
-    } catch (e) {
-      setErr((e as Error).message);
-    }
-  };
-  const analyze = async () => {
-    setBusy(true);
-    setStep(0);
-    setErr("");
-    try {
-      const res = await api<{ pack: RuPack }>("/api/ru/photo", "POST", { images: imgs.map(({ data, type }) => ({ data, type })), hint });
-      setPack(res.pack);
-      setKeep(new Set(res.pack.words.map((w, i) => (known.has(w.ru.toLowerCase()) ? -1 : i)).filter((i) => i >= 0)));
-    } catch (e) {
-      setErr((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  };
-  const save = async () => {
-    if (!pack) return;
-    setBusy(true);
-    let setId: number | null = null;
-    await run(async () => {
-      const res = await post<{ setId: number | null; added: number }>({ action: "pack.save", pack, words: [...keep] });
-      setId = res.setId;
-    }, "Dars saqlandi 📚");
-    setBusy(false);
-    if (setId) open({ k: "set", id: setId });
-    else onClose();
-  };
-
-  if (pack) {
-    return (
-      <Sheet title="Rasmdan olingan dars" onClose={onClose}>
-        <div className="form">
-          <div>
-            <h3 style={{ margin: "0 0 4px" }}>{pack.topic}</h3>
-            {pack.summary && <p style={{ margin: 0, color: "var(--muted)" }}>{pack.summary}</p>}
-          </div>
-          {pack.grammar.map((g, k) => (
-            <GrammarCard key={k} g={g} />
-          ))}
-          {pack.words.length > 0 && (
-            <div style={{ display: "grid", gap: 6 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <b>So&apos;zlar · {keep.size}/{pack.words.length} tanlandi</b>
-                <button className="link" onClick={() => setKeep(keep.size === pack.words.length ? new Set() : new Set(pack.words.map((_, i) => i)))}>
-                  {keep.size === pack.words.length ? "Hech biri" : "Hammasi"}
-                </button>
-              </div>
-              <div className="card flush" style={{ boxShadow: "none", background: "var(--surface-2)" }}>
-                {pack.words.map((w, k) => {
-                  const dup = known.has(w.ru.toLowerCase());
-                  return (
-                    <label key={k} className="row" style={{ cursor: "pointer", minHeight: 48 }}>
-                      <input
-                        type="checkbox"
-                        checked={keep.has(k)}
-                        onChange={(e) => {
-                          const n = new Set(keep);
-                          if (e.target.checked) n.add(k);
-                          else n.delete(k);
-                          setKeep(n);
-                        }}
-                        style={{ width: 20, height: 20, accentColor: "var(--brand)" }}
-                      />
-                      <span className="body">
-                        <span className="t" lang="ru">
-                          {w.ru} {w.gender && <span className="ru-g">{GTAG[w.gender]}</span>}
-                        </span>
-                        <span className="m">
-                          {w.uz}
-                          {dup && <span className="pill">bor</span>}
-                        </span>
-                      </span>
-                    </label>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-          {pack.homework && (
-            <p style={{ margin: 0 }}>
-              📌 <b>Uy vazifasi:</b> {pack.homework}
-            </p>
-          )}
-          <p style={{ margin: 0, color: "var(--muted)", fontSize: 14 }}>✨ {pack.exercises.length} ta mashq tayyor — saqlagach darhol boshlaysiz.</p>
-          <div className="foot">
-            <button className="btn soft" onClick={() => setPack(null)} disabled={busy}>
-              Orqaga
-            </button>
-            <button className="btn brand" onClick={save} disabled={busy}>
-              {busy ? "Saqlanmoqda…" : "Saqlash va mashq"}
-            </button>
-          </div>
-        </div>
-      </Sheet>
-    );
-  }
-
-  return (
-    <Sheet title="📷 Rasmdan dars" onClose={busy ? () => {} : onClose}>
-      <div className="form">
-        <p style={{ margin: 0, color: "var(--muted)", fontSize: 14 }}>
-          Darslik sahifasi, daftar yoki doskani rasmga oling (4 tagacha). AI yangi so&apos;zlarni, qoidani va mashqlarni ajratib, mustahkamlash uchun yangi mashqlar tuzadi.
-        </p>
-        <div className="ru-imgs">
-          {imgs.map((im, k) => (
-            <div key={k}>
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={im.url} alt={`Rasm ${k + 1}`} />
-              {!busy && (
-                <button aria-label="Olib tashlash" onClick={() => setImgs(imgs.filter((_, j) => j !== k))}>
-                  ×
-                </button>
-              )}
-            </div>
-          ))}
-          {imgs.length < 4 && !busy && (
-            <button className="ru-add" onClick={() => fileRef.current?.click()}>
-              <b>＋</b>
-              <span>{imgs.length ? "Yana rasm" : "Rasm tanlash"}</span>
-            </button>
-          )}
-        </div>
-        <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={(e) => (add(e.target.files), (e.target.value = ""))} />
-        <Field label="Izoh (ixtiyoriy)" htmlFor="ph-hint">
-          <input id="ph-hint" value={hint} onChange={(e) => setHint(e.target.value)} placeholder="Masalan: 5-dars, faqat 3-mashq" disabled={busy} />
-        </Field>
-        {err && <p className="err">{err}</p>}
-        {busy ? (
-          <div className="ru-wait" role="status">
-            <span className="spin" aria-hidden="true" />
-            <b>{WAIT[step]}</b>
-            <small>Odatda 30–90 soniya. Oynani yopmang.</small>
-          </div>
-        ) : (
-          <button className="btn brand block" disabled={!imgs.length || !r.ai} onClick={analyze}>
-            ✨ Tahlil qilish
-          </button>
-        )}
-        <p style={{ margin: 0, fontSize: 12, color: "var(--muted)" }}>Rasmni botga yuborsangiz ham bo&apos;ladi — dars avtomatik saqlanadi. Bugun yana {r.ai_left} ta AI so&apos;rov qoldi.</p>
-      </div>
-    </Sheet>
-  );
-}
-
-/* ============================== AI mashq tuzish ============================== */
-function GenSheet({ lessonId, onClose }: { lessonId?: number; onClose: () => void }) {
-  const { r, run, open } = useRu();
-  const [src, setSrc] = useState<string>(lessonId ? String(lessonId) : r.lessons[0] ? String(r.lessons[0].id) : "mix");
-  const [focus, setFocus] = useState("");
-  const [count, setCount] = useState("12");
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState("");
-  const weak = r.words.filter((w) => w.lapses > 0).length;
-  const go = async () => {
-    setBusy(true);
-    setErr("");
-    try {
-      const body: Record<string, unknown> = { focus, count: Number(count) };
-      if (src === "weak") body.mode = "weak";
-      else if (src !== "mix") body.lesson_id = Number(src);
-      const res = await api<{ id: number }>("/api/ru/gen", "POST", body);
-      await run(async () => {}, "Mashqlar tayyor ✨");
-      open({ k: "set", id: res.id });
-    } catch (e) {
-      setErr((e as Error).message);
-      setBusy(false);
-    }
-  };
-  return (
-    <Sheet title="✨ AI mashq" onClose={busy ? () => {} : onClose}>
-      <div className="form">
-        <Field label="Nima asosida?" htmlFor="gen-src">
-          <select id="gen-src" value={src} onChange={(e) => setSrc(e.target.value)} disabled={busy}>
-            {r.lessons.map((l) => (
-              <option key={l.id} value={l.id}>
-                📘 {l.topic} ({fmtDate(l.date)})
-              </option>
-            ))}
-            <option value="mix">🔀 Aralash — barcha so&apos;zlarim</option>
-            {weak > 0 && <option value="weak">🎯 Qiyin so&apos;zlarim ({weak} ta)</option>}
-          </select>
-        </Field>
-        <Field label="Nimaga e'tibor bersin? (ixtiyoriy)" htmlFor="gen-f">
-          <input id="gen-f" value={focus} onChange={(e) => setFocus(e.target.value)} placeholder="Masalan: предложный падеж, fe'l tuslanishi" disabled={busy} />
-        </Field>
-        <Chips
-          value={count}
-          onChange={setCount}
-          options={[
-            { v: "8", t: "8 ta" },
-            { v: "12", t: "12 ta" },
-            { v: "20", t: "20 ta" },
-          ]}
-        />
-        {err && <p className="err">{err}</p>}
-        {busy ? (
-          <div className="ru-wait" role="status">
-            <span className="spin" aria-hidden="true" />
-            <b>Mashqlar tuzilmoqda…</b>
-            <small>10–30 soniya</small>
-          </div>
-        ) : (
-          <button className="btn brand block" onClick={go} disabled={!r.ai || (src === "mix" && !r.words.length && !focus)}>
-            Tuzish
-          </button>
-        )}
-        {!r.ai && <p className="ru-warn">AI ulanmagan (ANTHROPIC_API_KEY).</p>}
-      </div>
-    </Sheet>
-  );
-}
-
-/* ============================== So'zlar ============================== */
-type WF = "all" | WordState | "hard" | "due";
-function WordsTab() {
-  const { r, open } = useRu();
-  const [q, setQ] = useState("");
-  const [f, setF] = useState<WF>("all");
-  const [closed, setClosed] = useState<Set<string>>(new Set());
-  const today = todayStr();
-  const match = (w: RuWord) => {
-    if (q && !(w.ru.toLowerCase().includes(q.toLowerCase()) || w.uz.toLowerCase().includes(q.toLowerCase()))) return false;
-    if (f === "hard") return w.lapses > 0;
-    if (f === "due") return isDueReview(w, today);
-    if (f !== "all") return wordState(w) === f;
-    return true;
-  };
-  if (!r.words.length)
-    return (
-      <div className="card">
-        <Empty emoji="🔤" text="Hali so'z yo'q. Qo'lda qo'shing yoki dars rasmini yuboring." btn="So'z qo'shish" onAdd={() => open({ k: "word" })} />
-      </div>
-    );
-  const groups = [
-    ...r.lessons.map((l) => ({ key: String(l.id), title: l.topic, lessonId: l.id as number | undefined, all: r.words.filter((w) => w.lesson_id === l.id) })),
-    { key: "none", title: "Boshqa so'zlar", lessonId: undefined, all: r.words.filter((w) => !w.lesson_id || !r.lessons.some((l) => l.id === w.lesson_id)) },
-  ].filter((g) => g.all.length);
-  const cnt = (fn: (w: RuWord) => boolean) => r.words.filter(fn).length;
   return (
     <>
-      <input className="search" type="search" placeholder="Qidirish (ruscha yoki o'zbekcha)…" value={q} onChange={(e) => setQ(e.target.value)} />
+      <div className="card ru-hero">
+        <div className="ru-ring" style={{ "--p": pct } as React.CSSProperties} aria-label={`Bugun ${xpToday} / ${goal} XP`}>
+          <div>
+            <b className="num">{xpToday}</b>
+            <small>/{goal} XP</small>
+          </div>
+        </div>
+        <div className="ru-hero-side">
+          <div className={"ru-streak" + (streak ? " on" : "")}>
+            <span aria-hidden="true">🔥</span>
+            <b>{streak}</b>
+            <small>kun ketma-ket</small>
+          </div>
+          <div className="ru-level">
+            <span className="ru-lv">{lv.level}</span>
+            <div style={{ flex: 1, display: "grid", gap: 4 }}>
+              <small>
+                {lv.level}-daraja · {lv.into}/{lv.need} XP
+              </small>
+              <div className="rs-prog thin">
+                <b style={{ width: (lv.into / lv.need) * 100 + "%" }} />
+              </div>
+            </div>
+          </div>
+          <small className="ru-tip">
+            {pct >= 100 ? "🎯 Bugungi maqsad bajarildi! Zo'r!" : streak && xpToday === 0 ? "Streak'ni yo'qotmang — bitta sessiya yetadi" : `Maqsadgacha ${Math.max(0, goal - xpToday)} XP`}
+          </small>
+        </div>
+      </div>
+
+      {main && (
+        <button className="ru-cta" onClick={main.go}>
+          <span>
+            <b>{main.t}</b>
+            <small>{main.s}</small>
+          </span>
+          <span className="ru-cta-go" aria-hidden="true">
+            ▶
+          </span>
+        </button>
+      )}
+
+      <div className="ru-quick">
+        <button disabled={!due.length} onClick={() => start("review", "Takrorlash", due.slice(0, 12))}>
+          <b>🔁</b>
+          <span>Takrorlash</span>
+          <small>{due.length ? `${due.length} ta` : "yo'q"}</small>
+        </button>
+        <button disabled={!hard.length} onClick={() => start("practice", "Qiyin so'zlar", hard.slice(0, 8))}>
+          <b>🎯</b>
+          <span>Xatolarim</span>
+          <small>{hard.length ? `${hard.length} ta` : "yo'q"}</small>
+        </button>
+        <button disabled={learned.length < 4} onClick={() => start("practice", "Tezkor mashq", shuffle(learned).slice(0, 8))}>
+          <b>⚡</b>
+          <span>Tezkor</span>
+          <small>8 ta so&apos;z</small>
+        </button>
+      </div>
+
+      {!units.length && (
+        <div className="card">
+          <Empty emoji="📷" text="Hali so'z yo'q. Lug'at rasmini yuboring yoki «Lug'at» bo'limida qo'lda qo'shing." />
+        </div>
+      )}
+
+      {units.map((u, ui) => (
+        <section key={u.id ?? "x"} className="ru-unit" style={{ "--u": `var(${UNIT_COLORS[ui % UNIT_COLORS.length]})` } as React.CSSProperties}>
+          <header>
+            <div>
+              <small>{ui + 1}-bo&apos;lim</small>
+              <h2>{u.title}</h2>
+            </div>
+            <span className="ru-unit-n num">
+              {u.learned}/{u.words.length}
+            </span>
+          </header>
+          <div className="ru-path">
+            {u.nodes.map((n) => {
+              const label = `${n.idx + 1}-bosqich: ${n.words.map((w) => w.ru).join(", ")}`;
+              return (
+                <div key={n.idx} className="ru-node-wrap" style={{ "--x": PATH_X[n.idx % PATH_X.length] } as React.CSSProperties}>
+                  {n.state === "open" && <span className="ru-start">BOSHLASH</span>}
+                  <button
+                    className={"ru-node " + n.state}
+                    aria-label={label}
+                    title={label}
+                    onClick={() => {
+                      if (n.state === "locked") return toast("🔒 Avval oldingi bosqichni tugating");
+                      if (n.state === "open") start("learn", `${n.idx + 1}-bosqich`, n.words.filter((w) => w.reps === 0));
+                      else start("practice", `${n.idx + 1}-bosqich · takror`, n.words);
+                    }}
+                  >
+                    {n.state === "done" ? "★" : n.state === "locked" ? "🔒" : n.idx + 1}
+                    {n.state === "open" && n.done > 0 && (
+                      <i className="ru-node-arc" style={{ "--p": (n.done / n.words.length) * 100 } as React.CSSProperties} />
+                    )}
+                  </button>
+                </div>
+              );
+            })}
+            <div className="ru-node-wrap" style={{ "--x": PATH_X[u.nodes.length % PATH_X.length] } as React.CSSProperties}>
+              <span className={"ru-chest" + (u.learned === u.words.length ? " open" : "")} aria-label="Bo'lim yakuni">
+                {u.learned === u.words.length ? "🏆" : "🎁"}
+              </span>
+            </div>
+          </div>
+        </section>
+      ))}
+    </>
+  );
+}
+
+const UNIT_COLORS = ["--brand", "--tasks", "--money", "--books", "--habit", "--notes"];
+const PATH_X = ["0px", "52px", "78px", "52px", "0px", "-52px", "-78px", "-52px"];
+
+/* ============================== Lug'at ============================== */
+
+type Filter = "all" | WordState | "hard";
+
+function Dict({ r, units, onEdit, start }: { r: RuData; units: RuUnit[]; onEdit: (w: RuWord) => void; start: (k: SessionKind, t: string, w: RuWord[]) => void }) {
+  const [q, setQ] = useState("");
+  const [f, setF] = useState<Filter>("all");
+  const match = (w: RuWord) => {
+    if (f === "hard" ? w.lapses === 0 : f !== "all" && wordState(w) !== f) return false;
+    if (!q.trim()) return true;
+    const s = q.trim().toLowerCase();
+    return w.ru.toLowerCase().includes(s) || w.uz.toLowerCase().includes(s);
+  };
+  const groups = units.map((u) => ({ u, ws: u.words.filter(match) })).filter((g) => g.ws.length);
+  const count = (s: Filter) => r.words.filter((w) => (s === "all" ? true : s === "hard" ? w.lapses > 0 : wordState(w) === s)).length;
+
+  return (
+    <>
+      <input className="ru-search" type="search" placeholder="🔍 So'z qidirish (ruscha yoki o'zbekcha)" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Qidirish" />
       <Chips
         value={f}
         onChange={setF}
         options={[
-          { v: "all", t: `Hammasi · ${r.words.length}` },
-          { v: "due", t: `Takrorlash · ${cnt((w) => isDueReview(w, today))}` },
-          { v: "new", t: `Yangi · ${cnt((w) => w.reps === 0)}` },
-          { v: "learning", t: `O'rganilmoqda · ${cnt((w) => wordState(w) === "learning")}` },
-          { v: "known", t: `Yod · ${cnt((w) => wordState(w) === "known")}` },
-          { v: "hard", t: `Qiyin · ${cnt((w) => w.lapses > 0)}` },
+          { v: "all", t: `Hammasi ${count("all")}` },
+          { v: "new", t: `Yangi ${count("new")}` },
+          { v: "learning", t: `O'rganilmoqda ${count("learning")}` },
+          { v: "known", t: `Yod ${count("known")}` },
+          { v: "hard", t: `Qiyin ${count("hard")}` },
         ]}
       />
-      {groups.map((g) => {
-        const list = g.all.filter(match);
-        if (!list.length) return null;
-        const isClosed = closed.has(g.key) && !q;
+      {!groups.length && (
+        <div className="card">
+          <Empty emoji="🔍" text={r.words.length ? "Hech narsa topilmadi" : "Hali so'z yo'q"} />
+        </div>
+      )}
+      {groups.map(({ u, ws }) => {
+        const learned = ws.filter((w) => w.reps > 0);
         return (
-          <div key={g.key} className="card flush">
-            <button
-              className="ru-group"
-              aria-expanded={!isClosed}
-              onClick={() => {
-                const n = new Set(closed);
-                if (n.has(g.key)) n.delete(g.key);
-                else n.add(g.key);
-                setClosed(n);
-              }}
-            >
-              <span style={{ flex: 1, display: "grid", gap: 6 }}>
-                <b>{g.title}</b>
-                <StackBar words={g.all} />
-                <small>
-                  {g.all.length} so&apos;z · yod {g.all.filter((w) => wordState(w) === "known").length} · yangi {g.all.filter((w) => w.reps === 0).length}
-                </small>
-              </span>
-              <span aria-hidden="true" className="ru-chev">
-                {isClosed ? "+" : "−"}
-              </span>
-            </button>
-            {!isClosed && (
-              <>
-                {g.all.some((w) => w.reps === 0) && (
-                  <div style={{ padding: "0 12px 8px", display: "flex", gap: 8 }}>
-                    <button className="btn sm soft" onClick={() => open({ k: "learn", lessonId: g.lessonId })}>
-                      🆕 Yod olish
-                    </button>
-                    {g.all.some((w) => isDueReview(w, today)) && (
-                      <button className="btn sm soft" onClick={() => open({ k: "review", lessonId: g.lessonId })}>
-                        🔁 Takrorlash
-                      </button>
-                    )}
-                  </div>
-                )}
-                {list.slice(0, 300).map((w) => {
-                  const st = wordState(w);
-                  return (
-                    <div key={w.id} className="row" style={{ cursor: "pointer" }} onClick={() => open({ k: "word", w })}>
-                      <span className="body">
-                        <span className="t" lang="ru">
-                          {w.ru} {w.gender && <span className="ru-g">{GTAG[w.gender]}</span>}
-                        </span>
-                        <span className="m">{w.uz}</span>
-                      </span>
-                      <SpeakBtn text={w.ru} />
-                      <span className={"ru-st " + st}>{st === "learning" ? (isDueReview(w, today) ? "bugun" : ivlLabel(Math.round((Date.parse(w.due) - Date.parse(today)) / 86400000))) : STATE_LABEL[st]}</span>
-                    </div>
-                  );
-                })}
-              </>
-            )}
+          <div className="card flush" key={u.id ?? "x"}>
+            <h2>
+              <span style={{ fontSize: 16 }}>{u.title}</span>
+              {learned.length >= 4 && (
+                <button className="link" onClick={() => start("practice", u.title, shuffle(learned).slice(0, 10))}>
+                  Mashq ▶
+                </button>
+              )}
+            </h2>
+            {ws.map((w) => {
+              const st = wordState(w);
+              return (
+                <div key={w.id} className="row ru-row" role="button" tabIndex={0} onClick={() => onEdit(w)} onKeyDown={(e) => e.key === "Enter" && onEdit(w)}>
+                  <button
+                    className="ru-say"
+                    aria-label={`${w.ru} — tinglash`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      speak(w.ru);
+                    }}
+                  >
+                    🔊
+                  </button>
+                  <span className="body">
+                    <span className="t">
+                      {w.ru} {w.gender && <small className="ru-g">{GTAG[w.gender]}</small>}
+                    </span>
+                    <span className="m">{w.uz}</span>
+                  </span>
+                  {w.lapses > 0 && <span className="pill bad" title="Xatolar soni">✗{w.lapses}</span>}
+                  <span className={"ru-st " + st}>{STATE_LABEL[st]}</span>
+                </div>
+              );
+            })}
           </div>
         );
       })}
@@ -879,359 +333,186 @@ function WordsTab() {
   );
 }
 
-function WordForm({ w, onClose }: { w?: RuWord; onClose: () => void }) {
-  const { run } = useRu();
+function WordForm({ w, units, onClose, onSaved }: { w?: RuWord; units: RuUnit[]; onClose: () => void; onSaved: () => void }) {
   const { toast } = useStore();
-  const [bulk, setBulk] = useState(false);
-  const [text, setText] = useState("");
-  const [ru, setRu] = useState(w?.ru ?? "");
-  const [uz, setUz] = useState(w?.uz ?? "");
-  const [g, setG] = useState<string>(w?.gender ?? "");
-  const [ex, setEx] = useState(w?.example ?? "");
   const [del, setDel] = useState(false);
-  const parsed = text
-    .split("\n")
-    .map((l) => l.split(/\s+[-–—=:]\s+|\t/))
-    .filter((p) => p.length >= 2 && p[0].trim() && p[1].trim())
-    .map((p) => ({ ru: p[0].trim(), uz: p.slice(1).join(" - ").trim() }));
-  const { busy, err, run: submit } = useSubmit(async () => {
-    if (w) await run(() => post({ action: "word.update", id: w.id, ru, uz, gender: g || null, example: ex }), "Saqlandi");
-    else if (bulk) {
-      let res = { added: 0, skipped: 0 };
-      await run(async () => {
-        res = await post<{ added: number; skipped: number; ok: boolean }>({ action: "word.add", words: parsed });
-      });
-      toast(`${res.added} ta so'z qo'shildi${res.skipped ? `, ${res.skipped} tasi oldin bor edi` : ""}`);
-    } else await run(() => post({ action: "word.add", ru, uz, gender: g || null, example: ex }), "So'z qo'shildi");
+  const { busy, err, run } = useSubmit(async (d) => {
+    if (w) await post({ action: "word.update", id: w.id, ...d });
+    else {
+      const res = await post<{ added: number }>({ action: "word.add", ...d, lesson_id: d.lesson_id ? Number(d.lesson_id) : null });
+      if (!res.added) throw new Error("Bu so'z lug'atda bor");
+    }
+    toast(w ? "Saqlandi" : "So'z qo'shildi");
+    onSaved();
     onClose();
   });
-  return (
-    <Sheet title={w ? "So'z" : "Yangi so'z"} onClose={onClose}>
-      <form
-        className="form"
-        onSubmit={(e) => {
-          e.preventDefault();
-          submit({});
-        }}
-      >
-        {!w && (
-          <Seg
-            label="Usul"
-            value={bulk ? "b" : "o"}
-            onChange={(v) => setBulk(v === "b")}
-            options={[
-              { v: "o", t: "Bitta" },
-              { v: "b", t: "Ro'yxat" },
-            ]}
-          />
-        )}
-        {bulk && !w ? (
-          <Field label="Har qatorda: слово — tarjima" htmlFor="wb" hint={`${parsed.length} ta so'z aniqlandi`}>
-            <textarea id="wb" rows={8} lang="ru" data-autofocus value={text} onChange={(e) => setText(e.target.value)} placeholder={"книга — kitob\nчитать - o'qimoq\nшкола — maktab"} />
-          </Field>
-        ) : (
-          <>
-            <Field label="Ruscha" htmlFor="wr">
-              <input id="wr" lang="ru" data-autofocus value={ru} onChange={(e) => setRu(e.target.value)} autoCapitalize="off" required />
-            </Field>
-            <Field label="Tarjimasi" htmlFor="wu">
-              <input id="wu" value={uz} onChange={(e) => setUz(e.target.value)} required />
-            </Field>
-            <div className="field">
-              <label>Rod (otlar uchun)</label>
-              <Chips
-                value={g}
-                onChange={setG}
-                options={[
-                  { v: "", t: "—" },
-                  { v: "m", t: "он" },
-                  { v: "f", t: "она" },
-                  { v: "n", t: "оно" },
-                  { v: "pl", t: "мн.ч." },
-                ]}
-              />
-            </div>
-            <Field label="Misol gap" htmlFor="we">
-              <input id="we" lang="ru" value={ex} onChange={(e) => setEx(e.target.value)} />
-            </Field>
-            {w && (
-              <p style={{ margin: 0, fontSize: 13, color: "var(--muted)" }}>
-                {w.reps} marta takrorlangan · {w.lapses} marta esdan chiqqan · keyingi: {fmtDate(w.due)}
-              </p>
-            )}
-          </>
-        )}
-        {err && <p className="err">{err}</p>}
-        <Foot onClose={onClose} busy={busy} label={bulk && !w ? `${parsed.length} ta qo'shish` : "Saqlash"} onDelete={w ? () => setDel(true) : undefined} />
-      </form>
-      {del && w && (
-        <Confirm
-          text={`«${w.ru}» o'chiriladi.`}
-          onClose={() => setDel(false)}
-          onYes={async () => {
-            await run(() => post({ action: "word.delete", id: w.id }), "O'chirildi");
-            onClose();
-          }}
-        />
-      )}
-    </Sheet>
-  );
-}
-
-/* ============================== Darslar ============================== */
-function LessonsTab() {
-  const { r, open } = useRu();
-  if (!r.lessons.length)
+  if (del && w)
     return (
-      <div className="card">
-        <Empty emoji="📘" text="Darslar shu yerda yig'iladi. Rasm yuklang yoki darsni qo'lda yozing." btn="📷 Rasmdan dars" onAdd={() => open({ k: "photo" })} />
-      </div>
+      <Confirm
+        text={`«${w.ru}» lug'atdan o'chiriladi.`}
+        onClose={() => setDel(false)}
+        onYes={async () => {
+          await post({ action: "word.delete", id: w.id });
+          onSaved();
+          onClose();
+        }}
+      />
     );
-  const count = (id: number) => r.words.filter((w) => w.lesson_id === id).length;
   return (
-    <div className="card flush">
-      {r.lessons.map((l) => (
-        <button key={l.id} className="row" style={{ width: "100%", background: "none", border: 0, font: "inherit", color: "inherit", textAlign: "left", cursor: "pointer" }} onClick={() => open({ k: "lesson", l })}>
-          <span className="ru-ic">{l.source === "rasm" ? "📷" : "📘"}</span>
-          <span className="body">
-            <span className="t">{l.topic || "Dars"}</span>
-            <span className="m">
-              {fmtDate(l.date)} · {count(l.id)} so&apos;z{l.grammar.length ? ` · ${l.grammar.length} qoida` : ""}
-              {l.homework && <span className="pill" style={l.hw_done ? undefined : { background: "color-mix(in srgb, var(--warn) 18%, transparent)" }}>{l.hw_done ? "✓ vazifa" : "vazifa"}</span>}
-            </span>
-          </span>
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function GrammarCard({ g }: { g: { title: string; rule: string; examples?: { ru: string; uz: string }[] } }) {
-  return (
-    <div className="ru-rule">
-      {g.title && <b>{g.title}</b>}
-      {g.rule && <p>{g.rule}</p>}
-      {g.examples?.map((e, k) => (
-        <div key={k} className="ru-ex">
-          <span lang="ru">{e.ru}</span>
-          <small>{e.uz}</small>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function LessonView({ l, onClose }: { l: RuLesson; onClose: () => void }) {
-  const { r, open, run } = useRu();
-  const lesson = r.lessons.find((x) => x.id === l.id) ?? l;
-  const words = r.words.filter((w) => w.lesson_id === l.id);
-  const sets = r.sets.filter((s) => s.lesson_id === l.id);
-  const [del, setDel] = useState(false);
-  return (
-    <Sheet title={lesson.topic || "Dars"} onClose={onClose}>
-      <div className="form">
-        <span style={{ color: "var(--muted)", fontSize: 14 }}>
-          {fmtDate(lesson.date)} · {lesson.source === "rasm" ? "rasmdan" : "qo'lda"}
-        </span>
-        {lesson.summary && <p style={{ margin: 0 }}>{lesson.summary}</p>}
-        {lesson.grammar.map((g, k) => (
-          <GrammarCard key={k} g={g} />
-        ))}
-        {lesson.homework && (
-          <label className="row" style={{ background: "var(--surface-2)", borderRadius: 14, cursor: "pointer" }}>
-            <input
-              type="checkbox"
-              checked={!!lesson.hw_done}
-              onChange={(e) => run(() => post({ action: "lesson.hw", id: lesson.id, done: e.target.checked }), e.target.checked ? "Bajarildi ✅" : undefined)}
-              style={{ width: 22, height: 22, accentColor: "var(--brand)" }}
-            />
-            <span className="body">
-              <span className="t">📌 {lesson.homework}</span>
-              <span className="m">Uy vazifasi</span>
-            </span>
-          </label>
-        )}
-        {lesson.notes && <p style={{ margin: 0, whiteSpace: "pre-wrap", color: "var(--muted)" }}>{lesson.notes}</p>}
-        {words.length > 0 && (
-          <div style={{ display: "grid", gap: 6 }}>
-            <b>So&apos;zlar · {words.length}</b>
-            <div className="ru-chips">
-              {words.map((w) => (
-                <span key={w.id} lang="ru" title={w.uz}>
-                  {w.ru} <small>— {w.uz}</small>
-                </span>
-              ))}
-            </div>
-          </div>
-        )}
-        {sets.length > 0 && (
-          <div className="card flush" style={{ boxShadow: "none", background: "var(--surface-2)" }}>
-            {sets.map((s) => (
-              <SetRow key={s.id} s={s} />
-            ))}
-          </div>
-        )}
-        {words.length > 0 && (
-          <div className="foot">
-            {words.some((w) => w.reps === 0) && (
-              <button className="btn brand" onClick={() => open({ k: "learn", lessonId: lesson.id })}>
-                🆕 So&apos;zlarni yod olish ({words.filter((w) => w.reps === 0).length})
-              </button>
-            )}
-            {words.some((w) => isDueReview(w, todayStr())) && (
-              <button className="btn soft" onClick={() => open({ k: "review", lessonId: lesson.id })}>
-                🔁 Takrorlash
-              </button>
-            )}
-          </div>
-        )}
-        <button className="btn soft block" onClick={() => open({ k: "gen", lessonId: lesson.id })}>
-          ✨ Shu dars bo&apos;yicha yangi AI mashqlar
-        </button>
-        <div className="foot">
-          <button className="btn soft left" onClick={() => setDel(true)} aria-label="O'chirish">
-            <I.trash />
-          </button>
-          <button className="btn soft" onClick={() => open({ k: "lessonForm", l: lesson })}>
-            Tahrirlash
-          </button>
-        </div>
-      </div>
-      {del && (
-        <Sheet title="Dars o'chirilsinmi?" onClose={() => setDel(false)}>
-          <div className="form">
-            <p style={{ margin: 0, color: "var(--muted)" }}>Dars va uning mashqlari o&apos;chiriladi. So&apos;zlar bilan nima qilamiz?</p>
-            <button className="btn soft block" onClick={() => run(() => post({ action: "lesson.delete", id: lesson.id }), "Dars o'chirildi").then(onClose)}>
-              So&apos;zlar qolsin
-            </button>
-            <button className="btn block" style={{ background: "var(--bad)", color: "#fff" }} onClick={() => run(() => post({ action: "lesson.delete", id: lesson.id, with_words: true }), "Dars va so'zlar o'chirildi").then(onClose)}>
-              So&apos;zlari bilan o&apos;chirish ({words.length})
-            </button>
-          </div>
-        </Sheet>
-      )}
-    </Sheet>
-  );
-}
-
-function LessonForm({ l, onClose }: { l?: RuLesson; onClose: () => void }) {
-  const { run } = useRu();
-  const [date, setDate] = useState(l?.date.slice(0, 10) ?? todayStr());
-  const [topic, setTopic] = useState(l?.topic ?? "");
-  const [grammar, setGrammar] = useState(l ? l.grammar.map((g) => [g.title, g.rule].filter(Boolean).join(": ")).join("\n\n") : "");
-  const [hw, setHw] = useState(l?.homework ?? "");
-  const [notes, setNotes] = useState(l?.notes ?? "");
-  const [words, setWords] = useState("");
-  const parsed = words
-    .split("\n")
-    .map((x) => x.split(/\s+[-–—=:]\s+|\t/))
-    .filter((p) => p.length >= 2 && p[0].trim() && p[1].trim())
-    .map((p) => ({ ru: p[0].trim(), uz: p.slice(1).join(" - ").trim() }));
-  const { busy, err, run: submit } = useSubmit(async () => {
-    await run(async () => {
-      // Tahrirlashda AI tuzgan qoidalar strukturasini saqlab qolamiz, agar matn o'zgarmagan bo'lsa
-      const same = l && grammar === l.grammar.map((g) => [g.title, g.rule].filter(Boolean).join(": ")).join("\n\n");
-      const res = await post<{ id: number; ok: boolean }>({ action: "lesson.save", id: l?.id, date, topic, grammar: same ? l!.grammar : grammar, homework: hw, hw_done: l?.hw_done ?? 0, notes });
-      if (parsed.length) await post({ action: "word.add", words: parsed, lesson_id: res.id });
-    }, "Dars saqlandi");
-    onClose();
-  });
-  return (
-    <Sheet title={l ? "Darsni tahrirlash" : "Yangi dars"} onClose={onClose}>
+    <Sheet title={w ? "So'zni tahrirlash" : "Yangi so'z"} onClose={onClose}>
       <form
         className="form"
         onSubmit={(e) => {
           e.preventDefault();
-          submit({});
+          run(Object.fromEntries(new FormData(e.currentTarget)));
         }}
       >
-        <div className="two">
-          <Field label="Mavzu" htmlFor="lt">
-            <input id="lt" data-autofocus value={topic} onChange={(e) => setTopic(e.target.value)} placeholder="Предложный падеж" required />
+        <Field label="Ruscha" htmlFor="wru">
+          <input id="wru" name="ru" defaultValue={w?.ru} required lang="ru" autoComplete="off" placeholder="книга" />
+        </Field>
+        <Field label="O'zbekcha" htmlFor="wuz" hint="Bir nechta ma'no bo'lsa vergul bilan: yechim, qaror">
+          <input id="wuz" name="uz" defaultValue={w?.uz} required autoComplete="off" placeholder="kitob" />
+        </Field>
+        <Field label="Rod" htmlFor="wg">
+          <select id="wg" name="gender" defaultValue={w?.gender ?? ""}>
+            <option value="">—</option>
+            {Object.entries(GENDER_LABEL).map(([k, v]) => (
+              <option key={k} value={k}>
+                {v}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Misol gap (ixtiyoriy)" htmlFor="wex">
+          <input id="wex" name="example" defaultValue={w?.example ?? ""} lang="ru" autoComplete="off" placeholder="Я читаю книгу." />
+        </Field>
+        {!w && units.some((u) => u.id) && (
+          <Field label="Bo'lim" htmlFor="wl">
+            <select id="wl" name="lesson_id" defaultValue={units.filter((u) => u.id).at(-1)?.id ?? ""}>
+              {units
+                .filter((u) => u.id)
+                .map((u) => (
+                  <option key={u.id} value={u.id!}>
+                    {u.title}
+                  </option>
+                ))}
+              <option value="">Boshqa so&apos;zlar</option>
+            </select>
           </Field>
-          <Field label="Sana" htmlFor="ld">
-            <input id="ld" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
-          </Field>
-        </div>
-        <Field label="Grammatika / qoida" htmlFor="lg">
-          <textarea id="lg" rows={4} value={grammar} onChange={(e) => setGrammar(e.target.value)} placeholder="Где? — в/на + П.п.: в школе, на работе" />
-        </Field>
-        <Field label="Yangi so'zlar (har qatorda: слово — tarjima)" htmlFor="lw" hint={parsed.length ? `${parsed.length} ta so'z qo'shiladi` : undefined}>
-          <textarea id="lw" rows={4} lang="ru" value={words} onChange={(e) => setWords(e.target.value)} placeholder={"школа — maktab\nработа — ish"} />
-        </Field>
-        <Field label="Uy vazifasi" htmlFor="lh">
-          <input id="lh" value={hw} onChange={(e) => setHw(e.target.value)} placeholder="45-bet, 3-mashq" />
-        </Field>
-        <Field label="Izoh" htmlFor="ln">
-          <textarea id="ln" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
-        </Field>
+        )}
+        {w && (
+          <p style={{ margin: 0, fontSize: 13, color: "var(--muted)" }}>
+            {STATE_LABEL[wordState(w)]} · {w.reps} marta takrorlangan · {w.lapses} xato · keyingi: {w.due.slice(0, 10)}
+          </p>
+        )}
         {err && <p className="err">{err}</p>}
-        <Foot onClose={onClose} busy={busy} />
+        <Foot onClose={onClose} busy={busy} onDelete={w ? () => setDel(true) : undefined} />
       </form>
     </Sheet>
   );
 }
 
-/* ============================== Qoidalar (ma'lumotnoma) ============================== */
-function GrammarTab() {
-  const { r } = useRu();
-  const [openId, setOpenId] = useState<string | null>(GRAMMAR[0].id);
-  const mine = r.lessons.filter((l) => l.grammar.length);
+/* ============================== Natijalar ============================== */
+
+function Stats({ r, today, xpTotal, goal, start }: { r: RuData; today: string; xpTotal: number; goal: number; start: (k: SessionKind, t: string, w: RuWord[]) => void }) {
+  const { streak } = ruStreak(r.log, today);
+  const byDay = new Map(r.log.map((l) => [l.date.slice(0, 10), l]));
+  const week = Array.from({ length: 7 }, (_, i) => {
+    const d = dayAdd(today, i - 6);
+    return { d, xp: Number(byDay.get(d)?.xp ?? 0), rev: Number(byDay.get(d)?.reviews ?? 0) };
+  });
+  const maxXp = Math.max(goal, ...week.map((w) => w.xp));
+  const last30 = r.log.filter((l) => l.date.slice(0, 10) > dayAdd(today, -30));
+  const rev30 = last30.reduce((a, l) => a + l.reviews, 0);
+  const acc = rev30 ? Math.round((last30.reduce((a, l) => a + l.correct, 0) / rev30) * 100) : null;
+  // Eng uzun streak
+  const days = [...byDay.values()].filter((l) => l.reviews > 0).map((l) => l.date.slice(0, 10)).sort();
+  let best = 0;
+  let cur = 0;
+  days.forEach((d, i) => {
+    cur = i && dayAdd(days[i - 1], 1) === d ? cur + 1 : 1;
+    best = Math.max(best, cur);
+  });
+  const st = { new: 0, learning: 0, known: 0 } as Record<WordState, number>;
+  r.words.forEach((w) => st[wordState(w)]++);
+  const hard = r.words.filter((w) => w.lapses > 0).sort((a, b) => b.lapses - a.lapses).slice(0, 8);
+  const lv = xpLevel(xpTotal);
+  const WD = ["Ya", "Du", "Se", "Ch", "Pa", "Ju", "Sh"];
+  const total = r.words.length || 1;
+
   return (
     <>
-      {GRAMMAR.map((s) => (
-        <div key={s.id} className="card" style={{ display: "grid", gap: 12 }}>
-          <button className="ru-acc" aria-expanded={openId === s.id} onClick={() => setOpenId(openId === s.id ? null : s.id)}>
-            <span>
-              {s.emoji} {s.title}
-            </span>
-            <span aria-hidden="true">{openId === s.id ? "−" : "+"}</span>
-          </button>
-          {openId === s.id &&
-            s.tables.map((t) => (
-              <div key={t.id} style={{ display: "grid", gap: 6 }}>
-                <b>{t.title}</b>
-                {t.intro && <p style={{ margin: 0, color: "var(--muted)", fontSize: 14 }}>{t.intro}</p>}
-                <div className="ru-tbl">
-                  <table>
-                    <thead>
-                      <tr>
-                        {t.head.map((h, k) => (
-                          <th key={k} lang="ru">
-                            {h}
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {t.rows.map((row, k) => (
-                        <tr key={k}>
-                          {row.map((c, j) => (
-                            <td key={j} lang="ru">
-                              {c}
-                            </td>
-                          ))}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-                {t.note && <p className="ru-note">{t.note}</p>}
-              </div>
-            ))}
+      <div className="ru-tiles">
+        <div>
+          <small>Jami XP</small>
+          <b className="num">{xpTotal}</b>
         </div>
-      ))}
-      {mine.length > 0 && (
-        <div className="card" style={{ display: "grid", gap: 10 }}>
-          <h2 style={{ margin: 0 }}>📘 Darslarimdagi qoidalar</h2>
-          {mine.map((l) => (
-            <div key={l.id} style={{ display: "grid", gap: 6 }}>
-              <small style={{ color: "var(--muted)", fontWeight: 600 }}>
-                {l.topic} · {fmtDate(l.date)}
-              </small>
-              {l.grammar.map((g, k) => (
-                <GrammarCard key={k} g={g} />
-              ))}
+        <div>
+          <small>Daraja</small>
+          <b>{lv.level}</b>
+        </div>
+        <div>
+          <small>Streak</small>
+          <b>🔥 {streak}</b>
+        </div>
+        <div>
+          <small>Rekord</small>
+          <b>{best} kun</b>
+        </div>
+      </div>
+
+      <div className="card">
+        <h2>Shu hafta</h2>
+        <div className="ru-week" role="img" aria-label={week.map((w) => `${w.d}: ${w.xp} XP`).join(", ")}>
+          <i className="ru-goal-line" style={{ bottom: `calc(${(goal / maxXp) * 100}% * .82 + 22px)` }} />
+          {week.map((w) => (
+            <div key={w.d} className={w.d === today ? "today" : ""}>
+              <span className="num">{w.xp || ""}</span>
+              <b style={{ height: `${(w.xp / maxXp) * 100}%`, opacity: w.xp >= goal ? 1 : 0.55 }} />
+              <small>{WD[new Date(w.d + "T00:00:00Z").getUTCDay()]}</small>
+            </div>
+          ))}
+        </div>
+        <p style={{ margin: "8px 0 0", fontSize: 13, color: "var(--muted)" }}>
+          Chiziq — kunlik maqsad ({goal} XP){acc !== null ? ` · 30 kunda aniqlik ${acc}%` : ""}
+        </p>
+      </div>
+
+      <div className="card">
+        <h2>So&apos;zlar</h2>
+        <div className="ru-stack" aria-hidden="true">
+          <b className="known" style={{ width: (st.known / total) * 100 + "%" }} />
+          <b className="learning" style={{ width: (st.learning / total) * 100 + "%" }} />
+        </div>
+        <div className="ru-legend">
+          <span>
+            <i className="known" /> Yod: <b>{st.known}</b>
+          </span>
+          <span>
+            <i className="learning" /> O&apos;rganilmoqda: <b>{st.learning}</b>
+          </span>
+          <span>
+            <i /> Yangi: <b>{st.new}</b>
+          </span>
+        </div>
+        <p style={{ margin: "8px 0 0", fontSize: 13, color: "var(--muted)" }}>«Yod» — 3 haftadan ko&apos;p vaqt esda turgan so&apos;zlar.</p>
+      </div>
+
+      {!!hard.length && (
+        <div className="card flush">
+          <h2>
+            <span>Qiyin so&apos;zlar</span>
+            <button className="link" onClick={() => start("practice", "Qiyin so'zlar", hard)}>
+              Mashq ▶
+            </button>
+          </h2>
+          {hard.map((w) => (
+            <div key={w.id} className="row">
+              <span className="body">
+                <span className="t">{w.ru}</span>
+                <span className="m">{w.uz}</span>
+              </span>
+              <span className="pill bad">✗{w.lapses}</span>
             </div>
           ))}
         </div>
@@ -1241,6 +522,7 @@ function GrammarTab() {
 }
 
 /* ============================== Sozlamalar ============================== */
+
 function RuSettings({ me, setMe, onClose }: { me: Me; setMe: (m: Me) => void; onClose: () => void }) {
   const { toast } = useStore();
   const save = async (patch: Record<string, unknown>) => {
@@ -1254,10 +536,35 @@ function RuSettings({ me, setMe, onClose }: { me: Me; setMe: (m: Me) => void; on
     return `${String(Math.floor(m / 60)).padStart(2, "0")}:${m % 60 ? "30" : "00"}`;
   });
   const [ap, setAp] = useState(autoplay());
+  const [sfx, setS] = useState(sfxOn());
+  const Toggle = ({ t, m, on, set }: { t: string; m: string; on: boolean; set: (v: boolean) => void }) => (
+    <label className="row" style={{ background: "var(--surface-2)", borderRadius: 14, cursor: "pointer" }}>
+      <span className="body">
+        <span className="t">{t}</span>
+        <span className="m">{m}</span>
+      </span>
+      <input type="checkbox" checked={on} onChange={(e) => set(e.target.checked)} style={{ width: 22, height: 22, accentColor: "var(--brand)" }} />
+    </label>
+  );
   return (
     <Sheet title="Rus tili sozlamalari" onClose={onClose}>
       <div className="form">
-        <Field label="Kuniga nechta yangi so'z" htmlFor="rdn" hint="15 ta — o'rtacha, 20–30 — tezlashtirilgan. Ko'p olsangiz, ertangi takrorlash ham ko'payadi.">
+        <Field label="Kunlik maqsad" htmlFor="rxp" hint="1 ta sessiya ≈ 60–150 XP">
+          <select id="rxp" value={me.ru_daily_xp || 50} onChange={(e) => save({ ru_daily_xp: Number(e.target.value) })}>
+            {[
+              [20, "Yengil"],
+              [50, "Oddiy"],
+              [100, "Jiddiy"],
+              [150, "Kuchli"],
+              [250, "Ekstremal"],
+            ].map(([n, t]) => (
+              <option key={n} value={n}>
+                {t} — {n} XP
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Kuniga yangi so'z (bot eslatmasi uchun)" htmlFor="rdn">
           <select id="rdn" value={me.ru_daily_new ?? 15} onChange={(e) => save({ ru_daily_new: Number(e.target.value) })}>
             {[5, 10, 15, 20, 30, 50].map((n) => (
               <option key={n} value={n}>
@@ -1267,29 +574,26 @@ function RuSettings({ me, setMe, onClose }: { me: Me; setMe: (m: Me) => void; on
           </select>
         </Field>
         {canSpeak() && (
-          <label className="row" style={{ background: "var(--surface-2)", borderRadius: 14, cursor: "pointer" }}>
-            <span className="body">
-              <span className="t">🔊 So&apos;zni avtomatik o&apos;qish</span>
-              <span className="m">Kartochka chiqqanda talaffuzini eshitasiz</span>
-            </span>
-            <input
-              type="checkbox"
-              checked={ap}
-              onChange={(e) => {
-                setAp(e.target.checked);
-                setAutoplay(e.target.checked);
-              }}
-              style={{ width: 22, height: 22, accentColor: "var(--brand)" }}
-            />
-          </label>
+          <Toggle
+            t="🔊 So'zni avtomatik o'qish"
+            m="Ruscha talaffuzni eshitasiz"
+            on={ap}
+            set={(v) => {
+              setAp(v);
+              setAutoplay(v);
+            }}
+          />
         )}
-        <label className="row" style={{ background: "var(--surface-2)", borderRadius: 14, cursor: "pointer" }}>
-          <span className="body">
-            <span className="t">Takrorlash eslatmasi</span>
-            <span className="m">Takrorlanadigan so&apos;z bo&apos;lsa va bugun hali mashq qilmagan bo&apos;lsangiz</span>
-          </span>
-          <input type="checkbox" checked={!!me.ru_remind} onChange={(e) => save({ ru_remind: e.target.checked })} style={{ width: 22, height: 22, accentColor: "var(--brand)" }} />
-        </label>
+        <Toggle
+          t="🎵 Ovoz effektlari"
+          m="To'g'ri/xato javobda qisqa signal"
+          on={sfx}
+          set={(v) => {
+            setS(v);
+            setSfx(v);
+          }}
+        />
+        <Toggle t="⏰ Telegram eslatmasi" m="Bugun hali mashq qilmagan bo'lsangiz" on={!!me.ru_remind} set={(v) => save({ ru_remind: v })} />
         {!!me.ru_remind && (
           <Field label="Eslatma vaqti" htmlFor="rut">
             <select id="rut" value={me.ru_remind_time} onChange={(e) => save({ ru_remind_time: e.target.value })}>
@@ -1300,7 +604,7 @@ function RuSettings({ me, setMe, onClose }: { me: Me; setMe: (m: Me) => void; on
           </Field>
         )}
         <p style={{ margin: 0, fontSize: 13, color: "var(--muted)" }}>
-          Botda: <code>/test</code> — Telegram ichida 5 ta savol, <code>/soz книга - kitob</code> — so&apos;z qo&apos;shish, <code>/rus</code> — bugungi holat.
+          Botda: <code>/test</code> — 5 ta savol, <code>/soz книга - kitob</code> — so&apos;z qo&apos;shish, <code>/rus</code> — bugungi holat.
         </p>
         <button className="btn soft" onClick={onClose}>
           Tayyor
@@ -1308,11 +612,4 @@ function RuSettings({ me, setMe, onClose }: { me: Me; setMe: (m: Me) => void; on
       </div>
     </Sheet>
   );
-}
-
-function fmtDate(d: string) {
-  const s = d.slice(0, 10);
-  const [y, m, day] = s.split("-").map(Number);
-  const M = ["yan", "fev", "mar", "apr", "may", "iyun", "iyul", "avg", "sen", "okt", "noy", "dek"];
-  return `${day}-${M[m - 1]}${y !== new Date().getFullYear() ? " " + y : ""}`;
 }

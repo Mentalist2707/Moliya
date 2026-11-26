@@ -30,6 +30,7 @@ export type Me = {
   ru_remind: number;
   ru_remind_time: string;
   ru_daily_new: number;
+  ru_daily_xp: number;
   local: boolean;
 };
 

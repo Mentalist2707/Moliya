@@ -1,33 +1,7 @@
 "use client";
 
-import { createContext, useContext } from "react";
-import type { RuData, RuLesson, RuWord } from "@/lib/ru";
 import { api } from "./ui";
-import type { Me } from "./Settings";
 
-export type Open =
-  | null
-  | { k: "review"; lessonId?: number }
-  | { k: "learn"; lessonId?: number }
-  | { k: "match" }
-  | { k: "photo" }
-  | { k: "gen"; lessonId?: number }
-  | { k: "quiz" }
-  | { k: "set"; id: number }
-  | { k: "word"; w?: RuWord }
-  | { k: "lesson"; l: RuLesson }
-  | { k: "lessonForm"; l?: RuLesson }
-  | { k: "settings" };
-
-export type Ctx = {
-  r: RuData;
-  me: Me | null;
-  reload: () => Promise<void>;
-  open: (o: Open) => void;
-  run: (fn: () => Promise<unknown>, msg?: string) => Promise<void>;
-};
-export const RuCtx = createContext<Ctx | null>(null);
-export const useRu = () => useContext(RuCtx)!;
 export const post = <T = { ok: boolean }>(body: Record<string, unknown>) => api<T>("/api/ru", "POST", body);
 
 /* ---------- Ovoz (brauzerning o'z nutq sintezi, bepul) ---------- */

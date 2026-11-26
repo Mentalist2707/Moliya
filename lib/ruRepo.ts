@@ -24,7 +24,7 @@ export async function getRu(uid: number, today: string): Promise<RuData> {
     q("SELECT * FROM ru_words WHERE user_id=$1 ORDER BY id DESC"),
     q("SELECT * FROM ru_lessons WHERE user_id=$1 ORDER BY date DESC, id DESC"),
     q("SELECT * FROM ru_sets WHERE user_id=$1 ORDER BY created_at DESC LIMIT 60"),
-    q("SELECT date, reviews, correct, ai_calls FROM ru_log WHERE user_id=$1 AND date >= CURRENT_DATE - 400 ORDER BY date"),
+    q("SELECT date, reviews, correct, ai_calls, xp FROM ru_log WHERE user_id=$1 AND date >= CURRENT_DATE - 400 ORDER BY date"),
   ]);
   const used = Number((log as { date: string; ai_calls: number }[]).find((l) => String(l.date).slice(0, 10) === today)?.ai_calls ?? 0);
   return { words, lessons, sets, log, ai: aiReady(), ai_left: Math.max(0, AI_DAILY_LIMIT - used) } as unknown as RuData;
@@ -242,4 +242,31 @@ export async function answerPoll(pollId: string, uid: number, option: number, to
   if (!ok) await gradeWord(uid, Number(p.word_id), 0, today);
   else if (isDue) await gradeWord(uid, Number(p.word_id), 2, today);
   else await logReview(uid, today, 1, 1);
+}
+
+/** Sessiya tugadi: baholar, yangi o'rganilgan so'zlar va XP bitta so'rovda */
+export async function finishSession(
+  uid: number,
+  today: string,
+  b: { grades?: { id: number; grade: number }[]; learned?: number[]; xp?: number; total?: number; correct?: number }
+) {
+  const grades = (Array.isArray(b.grades) ? b.grades : []).slice(0, 100);
+  for (const g of grades) {
+    const grade = Number(g.grade);
+    if (![0, 1, 2, 3].includes(grade) || !Number(g.id)) continue;
+    await gradeWord(uid, Number(g.id), grade as 0 | 1 | 2 | 3, today).catch(() => null);
+  }
+  const learned = Array.isArray(b.learned) ? await learnWords(uid, b.learned, today) : 0;
+  // gradeWord/learnWords o'zi takrorlashlarni yozadi; qolgan mashqlar (amaliyot) shu yerda
+  const extra = Math.max(0, (Number(b.total) || 0) - grades.length - learned);
+  const extraOk = Math.max(0, Math.min(extra, (Number(b.correct) || 0) - grades.filter((g) => Number(g.grade) > 0).length - learned));
+  if (extra) await logReview(uid, today, extra, extraOk);
+  const xp = Math.max(0, Math.min(2000, Math.round(Number(b.xp) || 0)));
+  const db = await getDb();
+  await db.query(
+    `INSERT INTO ru_log (user_id, date, xp) VALUES ($1,$2,$3)
+     ON CONFLICT (user_id, date) DO UPDATE SET xp = ru_log.xp + $3`,
+    [uid, today, xp]
+  );
+  return { learned };
 }

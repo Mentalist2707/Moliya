@@ -3,7 +3,7 @@ import { withUser } from "@/lib/api";
 import { todayIn } from "@/lib/telegram";
 import { cleanPack } from "@/lib/ru";
 import {
-  addWords, deleteLesson, learnWords, deleteSet, deleteWord, getRu, gradeWord, logReview, requireRu, saveLesson, savePack, scoreSet, setHomework, updateWord,
+  addWords, deleteLesson, finishSession, learnWords, deleteSet, deleteWord, getRu, gradeWord, logReview, requireRu, saveLesson, savePack, scoreSet, setHomework, updateWord,
 } from "@/lib/ruRepo";
 
 export const dynamic = "force-dynamic";
@@ -38,6 +38,8 @@ export const POST = withUser(async (req, uid) => {
     }
     case "word.learn":
       return NextResponse.json({ ok: true, n: await learnWords(uid, Array.isArray(b.ids) ? (b.ids as number[]) : [], today) });
+    case "session.finish":
+      return NextResponse.json({ ok: true, ...(await finishSession(uid, today, b as never)) });
     case "quiz.done":
       await logReview(uid, today, Number(b.total) || 0, Number(b.correct) || 0);
       break;

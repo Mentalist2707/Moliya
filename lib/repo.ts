@@ -210,10 +210,11 @@ export type User = {
   ru_remind?: number;
   ru_remind_time?: string;
   ru_daily_new?: number;
+  ru_daily_xp?: number;
 };
 
 const USER_COLS =
-  "id, first_name, last_name, username, photo_url, daily_digest, morning_time, crypto_report, region, prayer_remind, prayer_offset, prayer_list, qaza_remind, qaza_goal, fast_remind, sahar_offset, quran_goal, read_goal, read_year_goal, read_remind, read_remind_time, quote_morning, ru_enabled, ru_remind, ru_remind_time, ru_daily_new";
+  "id, first_name, last_name, username, photo_url, daily_digest, morning_time, crypto_report, region, prayer_remind, prayer_offset, prayer_list, qaza_remind, qaza_goal, fast_remind, sahar_offset, quran_goal, read_goal, read_year_goal, read_remind, read_remind_time, quote_morning, ru_enabled, ru_remind, ru_remind_time, ru_daily_new, ru_daily_xp";
 
 export async function upsertUser(u: { id: number; first_name?: string; last_name?: string; username?: string; photo_url?: string }) {
   const db = await getDb();
@@ -269,6 +270,7 @@ export async function updateSettings(uid: number, b: Record<string, unknown>) {
   bool("quote_morning");
   bool("ru_remind");
   if ([5, 10, 15, 20, 30, 50].includes(Number(b.ru_daily_new))) put("ru_daily_new", Number(b.ru_daily_new));
+  if ([20, 50, 100, 150, 250].includes(Number(b.ru_daily_xp))) put("ru_daily_xp", Number(b.ru_daily_xp));
   if (typeof b.ru_remind_time === "string" && /^([01]\d|2[0-3]):(00|30)$/.test(b.ru_remind_time)) put("ru_remind_time", b.ru_remind_time);
   if (typeof b.read_remind_time === "string" && /^([01]\d|2[0-3]):(00|30)$/.test(b.read_remind_time)) put("read_remind_time", b.read_remind_time);
   if (Number.isInteger(Number(b.read_goal)) && Number(b.read_goal) >= 0 && Number(b.read_goal) <= 500) put("read_goal", Number(b.read_goal));

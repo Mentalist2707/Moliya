@@ -421,6 +421,12 @@ const MIGRATE_V8 = `
 
 
 
+// Rus tili 2.0: XP va kunlik maqsad
+const MIGRATE_V9 = `
+  ALTER TABLE ru_log ADD COLUMN IF NOT EXISTS xp INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS ru_daily_xp SMALLINT NOT NULL DEFAULT 50;
+`;
+
 async function migrate(p: Pool) {
   await p.query(SCHEMA);
   await p.query(MIGRATE);
@@ -430,6 +436,7 @@ async function migrate(p: Pool) {
   await p.query(MIGRATE_V6);
   await p.query(MIGRATE_V7);
   await p.query(MIGRATE_V8);
+  await p.query(MIGRATE_V9);
   // Avvalgi (bir kishilik) versiyadagi ma'lumotlarni egasiga biriktirish
   const owner = Number(process.env.TELEGRAM_OWNER_ID || 0);
   if (owner) {

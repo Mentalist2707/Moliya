@@ -33,7 +33,7 @@ export type RuItem =
   | { type: "fill"; q: string; answer: string; accept?: string[]; hint?: string; explain?: string }
   | { type: "translate"; q: string; answer: string; accept?: string[]; explain?: string };
 export type RuSet = { id: number; lesson_id: number | null; title: string; items: RuItem[]; score: number | null; total: number | null; done_at: string | null; created_at: string };
-export type RuLogDay = { date: string; reviews: number; correct: number };
+export type RuLogDay = { date: string; reviews: number; correct: number; xp?: number };
 export type RuData = { words: RuWord[]; lessons: RuLesson[]; sets: RuSet[]; log: RuLogDay[]; ai: boolean; ai_left: number };
 
 /** Rasmdan yoki mavzudan AI qaytaradigan to'plam */
@@ -198,3 +198,72 @@ export function wordState(w: Pick<RuWord, "reps" | "ivl">): WordState {
 export const STATE_LABEL: Record<WordState, string> = { new: "yangi", learning: "o'rganilmoqda", known: "yod" };
 
 export const isDueReview = (w: Pick<RuWord, "reps" | "due">, today: string) => w.reps > 0 && w.due.slice(0, 10) <= today;
+
+/* ---------- Rus tili 2.0: o'yin mexanikasi ---------- */
+
+/** Bitta bosqichdagi so'zlar soni — qisqa, 2–3 daqiqalik sessiya */
+export const NODE_SIZE = 5;
+
+/** XP → daraja. N-darajadan N+1 ga o'tish uchun N*100 XP kerak */
+export function xpLevel(total: number): { level: number; into: number; need: number } {
+  let level = 1;
+  let rest = Math.max(0, total);
+  while (rest >= level * 100) {
+    rest -= level * 100;
+    level++;
+  }
+  return { level, into: rest, need: level * 100 };
+}
+
+export type RuNode = { idx: number; words: RuWord[]; done: number; state: "done" | "open" | "locked" };
+export type RuUnit = { id: number | null; title: string; words: RuWord[]; nodes: RuNode[]; learned: number };
+
+/** Darslar → bo'limlar (unit) → har biri NODE_SIZE so'zli bosqichlar. Har bo'limda birinchi tugallanmagan bosqich ochiq */
+export function buildUnits(words: RuWord[], lessons: Pick<RuLesson, "id" | "topic">[]): RuUnit[] {
+  const byLesson = new Map<number | null, RuWord[]>();
+  for (const w of [...words].sort((a, b) => a.id - b.id)) {
+    const k = w.lesson_id && lessons.some((l) => l.id === w.lesson_id) ? w.lesson_id : null;
+    if (!byLesson.has(k)) byLesson.set(k, []);
+    byLesson.get(k)!.push(w);
+  }
+  const order: (number | null)[] = [...lessons].sort((a, b) => a.id - b.id).map((l) => l.id);
+  if (byLesson.has(null)) order.push(null);
+  return order
+    .filter((id) => byLesson.get(id)?.length)
+    .map((id) => {
+      const ws = byLesson.get(id)!;
+      const nodes: RuNode[] = [];
+      let opened = false;
+      for (let i = 0; i < ws.length; i += NODE_SIZE) {
+        const chunk = ws.slice(i, i + NODE_SIZE);
+        const done = chunk.filter((w) => w.reps > 0).length;
+        let state: RuNode["state"] = "locked";
+        if (done === chunk.length) state = "done";
+        else if (!opened) {
+          state = "open";
+          opened = true;
+        }
+        nodes.push({ idx: nodes.length, words: chunk, done, state });
+      }
+      const title = id == null ? "Boshqa so'zlar" : lessons.find((l) => l.id === id)!.topic;
+      return { id, title, words: ws, nodes, learned: ws.filter((w) => w.reps > 0).length };
+    });
+}
+
+/** "yechim, qaror" / "kitob (darslik)" → qabul qilinadigan javoblar */
+export function uzAnswers(uz: string): string[] {
+  const base = uz.replace(/\([^)]*\)/g, " ");
+  const parts = base.split(/[,;/]/).map((x) => x.trim()).filter(Boolean);
+  return [...new Set([uz, base.trim(), ...parts])];
+}
+
+/** O'zbekcha apostrof variantlari: o' oʻ o‘ o` → bir xil */
+export function normUz(s: string): string {
+  return norm(s.replace(/[ʻʼ‘’`]/g, "'"));
+}
+
+export function isUzCorrect(given: string, uz: string): boolean {
+  const g = normUz(given);
+  if (!g) return false;
+  return uzAnswers(uz).some((a) => normUz(a) === g);
+}

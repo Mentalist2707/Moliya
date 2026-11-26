@@ -318,7 +318,7 @@ export default function Today({ go, me, openSettings }: { go: (t: Tab, sub?: str
         </div>
       )}
 
-      {!!me?.ru_enabled && <RuTodayCard go={go} />}
+      {!!me?.ru_enabled && <RuTodayCard go={go} goal={me?.ru_daily_xp || 50} />}
 
       {reading.length > 0 && (
         <div className="card" style={{ "--c": "var(--books)" } as React.CSSProperties}>
@@ -422,29 +422,32 @@ export default function Today({ go, me, openSettings }: { go: (t: Tab, sub?: str
   );
 }
 
-/** Rus tili: bugungi takrorlash va uy vazifasi */
-function RuTodayCard({ go }: { go: (t: Tab, sub?: string) => void }) {
+/** Rus tili: bugungi XP, streak va takrorlash */
+function RuTodayCard({ go, goal }: { go: (t: Tab, sub?: string) => void; goal: number }) {
   const [r, setR] = useState<RuData | null>(null);
   useEffect(() => {
     api<RuData>("/api/ru").then(setR).catch(() => {});
   }, []);
-  if (!r) return null;
+  if (!r || !r.words.length) return null;
   const today = todayStr();
-  const due = r.words.filter((w) => w.due.slice(0, 10) <= today).length;
-  const hw = r.lessons.filter((l) => l.homework && !l.hw_done).length;
-  const { streak, today: done } = ruStreak(r.log, today);
-  if (!r.words.length && !r.lessons.length) return null;
+  const due = r.words.filter((w) => w.reps > 0 && w.due.slice(0, 10) <= today).length;
+  const fresh = r.words.filter((w) => w.reps === 0).length;
+  const xp = Number(r.log.find((l) => l.date.slice(0, 10) === today)?.xp ?? 0);
+  const { streak } = ruStreak(r.log, today);
+  const done = xp >= goal;
   return (
     <button className="card" onClick={() => go("rus")} style={{ display: "flex", alignItems: "center", gap: 14, border: 0, font: "inherit", color: "inherit", textAlign: "left", cursor: "pointer", width: "100%" }}>
-      <span style={{ fontSize: 30 }} aria-hidden="true">🇷🇺</span>
+      <span className="ru-ring" style={{ "--p": Math.min(100, (xp / goal) * 100), width: 54, height: 54 } as React.CSSProperties} aria-hidden="true">
+        <span style={{ width: 42, height: 42, borderRadius: "50%", background: "var(--surface)", display: "grid", placeItems: "center", fontSize: 20 }}>🇷🇺</span>
+      </span>
       <span style={{ flex: 1, display: "grid", gap: 2 }}>
         <b>Rus tili{streak ? ` · 🔥 ${streak}` : ""}</b>
         <span style={{ fontSize: 14, color: "var(--muted)" }}>
-          {due ? `${due} ta so'z takrorlash kerak` : done ? "Bugungi takrorlash bajarildi ✓" : "Bugun takrorlash yo'q"}
-          {hw ? ` · ${hw} ta uy vazifasi` : ""}
+          {done ? `Bugungi maqsad bajarildi ✓ (${xp} XP)` : `${xp}/${goal} XP`}
+          {due ? ` · ${due} ta takrorlash` : fresh ? ` · ${fresh} ta yangi so'z` : ""}
         </span>
       </span>
-      <span className="pill">{due ? "Boshlash" : "Ochish"}</span>
+      <span className="pill">{done ? "Ochish" : "Boshlash"}</span>
     </button>
   );
 }
