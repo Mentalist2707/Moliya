@@ -490,6 +490,7 @@ button.kpi:hover { background: var(--surface-2); }
 .rs-input:focus { outline: none; border-color: var(--tasks); }
 .rs-input.ok { border-color: var(--ok); color: var(--ok); }
 .rs-input.bad { border-color: var(--bad); color: var(--bad); text-decoration: line-through; }
+.rs-input::placeholder { text-decoration: none; }
 .rs-match { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .rs-match > div { display: grid; gap: 10px; align-content: start; }
 .rs-m {
@@ -546,3 +547,26 @@ button.kpi:hover { background: var(--surface-2); }
   background: hsl(calc(var(--i) * 47) 90% 58%); animation: fall calc(1.8s + var(--i) * 0.05s) ease-in calc(var(--i) * 0.04s) forwards;
 }
 @keyframes fall { to { transform: translateY(105vh) rotate(calc(var(--i) * 70deg)); } }
+
+/* Grammatika */
+.ru-gram { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; margin-top: 4px; }
+.ru-gram button { border: 2px solid color-mix(in srgb, var(--u) 35%, var(--line)); background: var(--surface); border-radius: 16px; padding: 10px 12px; display: grid; grid-template-columns: auto 1fr; column-gap: 8px; text-align: left; font: inherit; color: inherit; cursor: pointer; box-shadow: 0 3px 0 color-mix(in srgb, var(--u) 30%, var(--line)); }
+.ru-gram button:active { transform: translateY(2px); box-shadow: none; }
+.ru-gram button.done { border-color: color-mix(in srgb, var(--money) 45%, var(--line)); box-shadow: 0 3px 0 color-mix(in srgb, var(--money) 35%, var(--line)); }
+.ru-gram b { grid-row: span 2; font-size: 24px; align-self: center; }
+.ru-gram span { font-weight: 700; font-size: 14px; line-height: 1.25; }
+.ru-gram small { font-size: 12px; color: var(--muted); }
+.ru-rules { display: grid; gap: 14px; }
+.ru-rules article { background: var(--surface-2); border-radius: 16px; padding: 14px; }
+.ru-rules h4 { margin: 0 0 6px; font-size: 16px; }
+.ru-rules p { margin: 0; white-space: pre-line; line-height: 1.55; }
+.ru-rules table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 15px; }
+.ru-rules td { padding: 6px 4px; border-top: 1px solid var(--line); vertical-align: middle; }
+.ru-rules td:first-child { font-weight: 700; }
+.ru-rules .ru-say { width: 30px; height: 30px; font-size: 13px; margin-left: 6px; vertical-align: middle; }
+.rs-q { font-size: clamp(20px, 5.5vw, 26px); font-weight: 700; line-height: 1.35; overflow-wrap: anywhere; }
+.rs-kb { display: grid; gap: 6px; user-select: none; }
+.rs-kb > div { display: flex; gap: 4px; justify-content: center; }
+.rs-kb button { flex: 1; max-width: 40px; height: 44px; border: 0; border-radius: 8px; background: var(--surface); box-shadow: 0 2px 0 var(--line); font: inherit; font-size: 18px; font-weight: 600; color: var(--ink); padding: 0; }
+.rs-kb button:active { background: var(--surface-2); transform: translateY(1px); }
+.rs-kb button.wide { max-width: 140px; font-size: 14px; color: var(--muted); }

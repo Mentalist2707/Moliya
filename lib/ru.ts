@@ -201,8 +201,8 @@ export const isDueReview = (w: Pick<RuWord, "reps" | "due">, today: string) => w
 
 /* ---------- Rus tili 2.0: o'yin mexanikasi ---------- */
 
-/** Bitta bosqichdagi so'zlar soni — qisqa, 2–3 daqiqalik sessiya */
-export const NODE_SIZE = 5;
+/** Bitta bosqichdagi so'zlar soni */
+export const NODE_SIZE = 20;
 
 /** XP → daraja. N-darajadan N+1 ga o'tish uchun N*100 XP kerak */
 export function xpLevel(total: number): { level: number; into: number; need: number } {

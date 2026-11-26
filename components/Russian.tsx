@@ -10,7 +10,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { todayStr } from "@/lib/format";
 import {
   buildUnits, GENDER_LABEL, isDueReview, ruStreak, shuffle, STATE_LABEL, wordState, xpLevel,
-  type RuData, type RuUnit, type RuWord, type WordState,
+  type RuData, type RuGrammar, type RuItem, type RuSet, type RuUnit, type RuWord, type WordState,
 } from "@/lib/ru";
 import { api, Chips, Confirm, Empty, Field, Foot, Seg, Sheet, useStore, useSubmit } from "./ui";
 import { I } from "./icons";
@@ -19,7 +19,7 @@ import { autoplay, canSpeak, post, setAutoplay, speak } from "./ruCtx";
 import Session, { setSfx, sfxOn, type SessionKind } from "./RuSession";
 
 type Sub = "learn" | "dict" | "stats";
-type Run = { kind: SessionKind; title: string; words: RuWord[] };
+type Run = { kind: SessionKind; title: string; words: RuWord[]; items?: RuItem[]; setId?: number };
 
 const GTAG: Record<string, string> = { m: "м", f: "ж", n: "ср", pl: "мн" };
 const dayAdd = (d: string, n: number) => new Date(Date.parse(d + "T00:00:00Z") + n * 86400000).toISOString().slice(0, 10);
@@ -32,6 +32,7 @@ export default function Russian({ me, setMe }: { me: Me | null; setMe: (m: Me) =
   const [run, setRun] = useState<Run | null>(null);
   const [settings, setSettings] = useState(false);
   const [edit, setEdit] = useState<RuWord | "new" | null>(null);
+  const [rule, setRule] = useState<{ title: string; g: RuGrammar[] } | null>(null);
 
   const reload = useCallback(async () => {
     try {
@@ -58,6 +59,10 @@ export default function Russian({ me, setMe }: { me: Me | null; setMe: (m: Me) =
     if (!words.length) return toast("Bu yerda hozircha so'z yo'q");
     setRun({ kind, title, words });
   };
+  const startSet = (set: RuSet) => {
+    if (!set.items.length) return toast("Bu mashqda savol yo'q");
+    setRun({ kind: "grammar", title: set.title, words: [], items: set.items, setId: set.id });
+  };
 
   return (
     <>
@@ -82,7 +87,9 @@ export default function Russian({ me, setMe }: { me: Me | null; setMe: (m: Me) =
           { v: "stats", t: "Natijalar" },
         ]}
       />
-      {sub === "learn" && <Learn r={r} units={units} today={today} xpToday={xpToday} xpTotal={xpTotal} goal={goal} start={start} />}
+      {sub === "learn" && (
+        <Learn r={r} units={units} today={today} xpToday={xpToday} xpTotal={xpTotal} goal={goal} start={start} startSet={startSet} openRule={setRule} />
+      )}
       {sub === "dict" && <Dict r={r} units={units} onEdit={setEdit} start={start} />}
       {sub === "stats" && <Stats r={r} today={today} xpTotal={xpTotal} goal={goal} start={start} />}
       {sub === "dict" && (
@@ -105,6 +112,7 @@ export default function Russian({ me, setMe }: { me: Me | null; setMe: (m: Me) =
         />
       )}
       {edit && <WordForm w={edit === "new" ? undefined : edit} units={units} onClose={() => setEdit(null)} onSaved={reload} />}
+      {rule && <RuleSheet title={rule.title} g={rule.g} onClose={() => setRule(null)} />}
       {settings && me && <RuSettings me={me} setMe={setMe} onClose={() => setSettings(false)} />}
     </>
   );
@@ -113,10 +121,12 @@ export default function Russian({ me, setMe }: { me: Me | null; setMe: (m: Me) =
 /* ============================== O'rganish ============================== */
 
 function Learn({
-  r, units, today, xpToday, xpTotal, goal, start,
+  r, units, today, xpToday, xpTotal, goal, start, startSet, openRule,
 }: {
   r: RuData; units: RuUnit[]; today: string; xpToday: number; xpTotal: number; goal: number;
   start: (k: SessionKind, t: string, w: RuWord[]) => void;
+  startSet: (s: RuSet) => void;
+  openRule: (x: { title: string; g: RuGrammar[] }) => void;
 }) {
   const { toast } = useStore();
   const { streak } = ruStreak(r.log, today);
@@ -129,7 +139,7 @@ function Learn({
 
   // Asosiy tugma: avval takrorlash (xotira so'nmasin), keyin yangi bosqich
   const main = due.length
-    ? { t: "Takrorlash", s: `${Math.min(due.length, 12)} ta so'z esdan chiqyapti`, go: () => start("review", "Takrorlash", due.slice(0, 12)) }
+    ? { t: "Takrorlash", s: `${Math.min(due.length, 20)} ta so'z esdan chiqyapti`, go: () => start("review", "Takrorlash", due.slice(0, 20)) }
     : nextNode
       ? { t: "Davom etish", s: `${nextNode.u.title} · ${nextNode.n.idx + 1}-bosqich`, go: () => start("learn", `${nextNode.n.idx + 1}-bosqich`, nextNode.n.words.filter((w) => w.reps === 0)) }
       : learned.length
@@ -181,7 +191,7 @@ function Learn({
       )}
 
       <div className="ru-quick">
-        <button disabled={!due.length} onClick={() => start("review", "Takrorlash", due.slice(0, 12))}>
+        <button disabled={!due.length} onClick={() => start("review", "Takrorlash", due.slice(0, 20))}>
           <b>🔁</b>
           <span>Takrorlash</span>
           <small>{due.length ? `${due.length} ta` : "yo'q"}</small>
@@ -204,7 +214,12 @@ function Learn({
         </div>
       )}
 
-      {units.map((u, ui) => (
+      {units.map((u, ui) => {
+        const lesson = r.lessons.find((l) => l.id === u.id);
+        const grammar = lesson?.grammar ?? [];
+        const sets = r.sets.filter((x) => x.lesson_id != null && x.lesson_id === u.id).sort((a, b) => a.id - b.id);
+        const allDone = u.learned === u.words.length && sets.every((x) => x.done_at);
+        return (
         <section key={u.id ?? "x"} className="ru-unit" style={{ "--u": `var(${UNIT_COLORS[ui % UNIT_COLORS.length]})` } as React.CSSProperties}>
           <header>
             <div>
@@ -215,6 +230,24 @@ function Learn({
               {u.learned}/{u.words.length}
             </span>
           </header>
+          {(grammar.length > 0 || sets.length > 0) && (
+            <div className="ru-gram">
+              {grammar.length > 0 && (
+                <button onClick={() => openRule({ title: u.title, g: grammar })}>
+                  <b>📖</b>
+                  <span>Qoida</span>
+                  <small>{grammar.length} ta mavzu</small>
+                </button>
+              )}
+              {sets.map((x, si) => (
+                <button key={x.id} className={x.done_at ? "done" : ""} onClick={() => startSet(x)}>
+                  <b>{x.done_at ? "✅" : "📘"}</b>
+                  <span>{x.title || `${si + 1}-mashq`}</span>
+                  <small>{x.done_at && x.total ? `${x.score}/${x.total} · qayta ishlash` : `${x.items.length} ta savol`}</small>
+                </button>
+              ))}
+            </div>
+          )}
           <div className="ru-path">
             {u.nodes.map((n) => {
               const label = `${n.idx + 1}-bosqich: ${n.words.map((w) => w.ru).join(", ")}`;
@@ -240,19 +273,57 @@ function Learn({
               );
             })}
             <div className="ru-node-wrap" style={{ "--x": PATH_X[u.nodes.length % PATH_X.length] } as React.CSSProperties}>
-              <span className={"ru-chest" + (u.learned === u.words.length ? " open" : "")} aria-label="Bo'lim yakuni">
-                {u.learned === u.words.length ? "🏆" : "🎁"}
+              <span className={"ru-chest" + (allDone ? " open" : "")} aria-label="Bo'lim yakuni">
+                {allDone ? "🏆" : "🎁"}
               </span>
             </div>
           </div>
         </section>
-      ))}
+        );
+      })}
     </>
   );
 }
 
 const UNIT_COLORS = ["--brand", "--tasks", "--money", "--books", "--habit", "--notes"];
 const PATH_X = ["0px", "52px", "78px", "52px", "0px", "-52px", "-78px", "-52px"];
+
+/* ============================== Qoida ============================== */
+
+function RuleSheet({ title, g, onClose }: { title: string; g: RuGrammar[]; onClose: () => void }) {
+  return (
+    <Sheet title={"📖 " + title} onClose={onClose}>
+      <div className="ru-rules">
+        {g.map((x, i) => (
+          <article key={i}>
+            {x.title && <h4>{x.title}</h4>}
+            <p>{x.rule}</p>
+            {!!x.examples?.length && (
+              <table>
+                <tbody>
+                  {x.examples.map((e, j) => (
+                    <tr key={j}>
+                      <td lang="ru">
+                        {e.ru}
+                        <button className="ru-say" aria-label="Tinglash" onClick={() => speak(e.ru)}>
+                          🔊
+                        </button>
+                      </td>
+                      <td>{e.uz}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </article>
+        ))}
+        <button className="btn soft" onClick={onClose}>
+          Tushundim
+        </button>
+      </div>
+    </Sheet>
+  );
+}
 
 /* ============================== Lug'at ============================== */
 

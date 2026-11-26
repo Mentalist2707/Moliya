@@ -6,11 +6,11 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { pushBack } from "@/lib/back";
-import { almost, GENDER_LABEL, isCorrect, isUzCorrect, shuffle, variants, type RuWord } from "@/lib/ru";
+import { almost, GENDER_LABEL, isCorrect, isUzCorrect, shuffle, variants, type RuItem, type RuWord } from "@/lib/ru";
 import { autoplay, canSpeak, post, speak } from "./ruCtx";
 import { useStore } from "./ui";
 
-export type SessionKind = "learn" | "review" | "practice";
+export type SessionKind = "learn" | "review" | "practice" | "grammar";
 export type SessionResult = { xp: number; correct: number; total: number; combo: number; secs: number; learned: number };
 
 type Step =
@@ -19,9 +19,13 @@ type Step =
   | { k: "listen"; w: RuWord }
   | { k: "tiles"; w: RuWord }
   | { k: "type"; w: RuWord }
-  | { k: "match"; ws: RuWord[] };
+  | { k: "match"; ws: RuWord[] }
+  | { k: "item"; it: RuItem; i: number };
 
-type Verdict = { ok: boolean; near?: boolean; answer: string; w: RuWord };
+/** Javob natijasi: so'z yoki grammatika mashqi uchun umumiy */
+type Verdict = { ok: boolean; near?: boolean; answer: string; line?: string; example?: string | null; say?: string };
+type Info = { id?: number; key: string; answer: string; line?: string; example?: string | null; say?: string };
+type OnWord = (ok: boolean, w: RuWord, shown: string, near?: boolean) => void;
 
 /* ---------- Ovoz effektlari (WebAudio, fayl yuklamasdan) ---------- */
 let actx: AudioContext | null = null;
@@ -87,17 +91,22 @@ function distractors(w: RuWord, pool: RuWord[], field: "ru" | "uz", n = 3): stri
 function plan(kind: SessionKind, words: RuWord[]): Step[] {
   const speakOk = canSpeak();
   if (kind === "learn") {
-    // Juft-juft tanishuv: so'z → darhol tanib olish; keyin aralash mustahkamlash; oxirida juftlash
+    // 4 tadan guruh: tanishuv → tanib olish → juftlash; oxirida hamma so'zlar aralash takror
     const steps: Step[] = [];
-    for (let i = 0; i < words.length; i += 2) {
-      const pair = words.slice(i, i + 2);
-      pair.forEach((w) => steps.push({ k: "intro", w }));
-      pair.forEach((w) => steps.push({ k: "choice", w, dir: "ru2uz" }));
+    for (let i = 0; i < words.length; i += 4) {
+      const g = words.slice(i, i + 4);
+      g.forEach((w) => steps.push({ k: "intro", w }));
+      shuffle(g).forEach((w) => steps.push({ k: "choice", w, dir: "ru2uz" }));
+      if (g.length >= 3) steps.push({ k: "match", ws: g });
     }
-    const mid: Step[] = words.map((w, i) => (speakOk && i % 2 ? { k: "listen", w } : { k: "choice", w, dir: "uz2ru" }));
-    const late: Step[] = words.map((w, i) => (tileable(w) && i % 2 === 0 ? { k: "tiles", w } : { k: "type", w }));
-    steps.push(...shuffle(mid));
-    if (words.length >= 3) steps.push({ k: "match", ws: words });
+    const KINDS = ["uz2ru", "tiles", "listen", "type"] as const;
+    const late: Step[] = words.map((w, i) => {
+      const t = KINDS[i % 4];
+      if (t === "tiles" && tileable(w)) return { k: "tiles", w };
+      if (t === "listen" && speakOk) return { k: "listen", w };
+      if (t === "type") return { k: "type", w };
+      return { k: "choice", w, dir: "uz2ru" };
+    });
     steps.push(...shuffle(late));
     return steps;
   }
@@ -125,6 +134,8 @@ export default function Session({
   kind,
   title,
   words,
+  items,
+  setId,
   pool,
   onClose,
   onSaved,
@@ -134,6 +145,8 @@ export default function Session({
   kind: SessionKind;
   title: string;
   words: RuWord[];
+  items?: RuItem[];
+  setId?: number;
   pool: RuWord[];
   onClose: () => void;
   onSaved: () => void;
@@ -141,7 +154,9 @@ export default function Session({
   xpToday: number;
 }) {
   const { haptic, toast } = useStore();
-  const [queue, setQueue] = useState<Step[]>(() => plan(kind, words));
+  const [queue, setQueue] = useState<Step[]>(() =>
+    kind === "grammar" ? (items ?? []).map((it, i) => ({ k: "item" as const, it, i })) : plan(kind, words)
+  );
   const [pos, setPos] = useState(0);
   const [verdict, setVerdict] = useState<Verdict | null>(null);
   const [xp, setXp] = useState(0);
@@ -154,6 +169,7 @@ export default function Session({
   const started = useRef(Date.now());
   const missed = useRef(new Set<number>()); // xato qilingan so'zlar
   const nearMiss = useRef(new Set<number>());
+  const missedKeys = useRef(new Set<string>()); // grammatika: birinchi urinishda xato qilingan savollar
   const retried = useRef(new Set<string>()); // qayta qo'yilgan mashqlar (har so'z+tur bir marta)
 
   // Orqaga tugmasi: avval "chiqasizmi?" so'rash
@@ -170,8 +186,8 @@ export default function Session({
   const progress = Math.min(100, (queue.slice(0, pos).filter((s) => s.k !== "intro").length / Math.max(1, queue.filter((s) => s.k !== "intro").length)) * 100);
 
   const answer = useCallback(
-    (ok: boolean, w: RuWord, shown: string, near = false) => {
-      setVerdict({ ok, near, answer: shown, w });
+    (ok: boolean, inf: Info, near = false) => {
+      setVerdict({ ok, near, answer: inf.answer, line: inf.line, example: inf.example, say: inf.say });
       setStats((s) => ({ correct: s.correct + (ok ? 1 : 0), total: s.total + 1 }));
       if (ok) {
         const c = combo + 1;
@@ -180,26 +196,34 @@ export default function Session({
         const add = 10 + (c >= 3 ? 5 : 0);
         setXp((x) => x + add);
         setBonus(c >= 3 && c % 5 === 0 ? `🔥 ${c} ta ketma-ket!` : null);
-        if (near) nearMiss.current.add(w.id);
+        if (near && inf.id) nearMiss.current.add(inf.id);
         beep("ok");
         haptic("success");
-        if (autoplay()) speak(w.ru);
+        if (inf.say && autoplay()) speak(inf.say);
       } else {
         setCombo(0);
         setBonus(null);
-        missed.current.add(w.id);
+        if (inf.id) missed.current.add(inf.id);
+        else missed.current.add(-1);
         beep("bad");
         haptic();
         // Shu mashqni sessiya oxiriga yana qo'yamiz (bir marta)
-        const st = queue[pos];
-        const key = st && "w" in st ? `${st.k}:${st.w.id}` : "";
-        if (key && !retried.current.has(key)) {
-          retried.current.add(key);
+        missedKeys.current.add(inf.key);
+        if (!retried.current.has(inf.key)) {
+          retried.current.add(inf.key);
           setQueue((q) => [...q, q[pos]]);
         }
       }
     },
-    [combo, haptic, pos, queue]
+    [combo, haptic, pos]
+  );
+
+  const onWord: OnWord = useCallback(
+    (ok, w, shown, near) => {
+      const st = queue[pos];
+      answer(ok, { id: w.id, key: `${st?.k}:${w.id}`, answer: shown, line: `${w.ru} — ${w.uz}`, example: w.example, say: w.ru }, near);
+    },
+    [answer, pos, queue]
   );
 
   const finish = useCallback(async () => {
@@ -215,19 +239,21 @@ export default function Session({
         ? words.map((w) => ({ id: w.id, grade: missed.current.has(w.id) ? 0 : nearMiss.current.has(w.id) ? 1 : w.ivl > 10 ? 3 : 2 }))
         : [];
     try {
+      const n = items?.length ?? 0;
+      if (kind === "grammar" && setId) await post({ action: "set.score", id: setId, score: n - missedKeys.current.size, total: n });
       await post({
         action: "session.finish",
         grades,
         learned: kind === "learn" ? words.map((w) => w.id) : [],
         xp: total,
-        total: Math.max(stats.total, grades.length),
+        total: kind === "grammar" ? 0 : Math.max(stats.total, grades.length),
         correct: stats.correct,
       });
       onSaved();
     } catch (e) {
       toast("Natija saqlanmadi: " + (e as Error).message);
     }
-  }, [best, haptic, kind, onSaved, stats, toast, words, xp]);
+  }, [best, haptic, items, kind, onSaved, setId, stats, toast, words, xp]);
 
   const next = useCallback(() => {
     setVerdict(null);
@@ -270,10 +296,11 @@ export default function Session({
 
       <div className="rs-body" key={pos}>
         {step?.k === "intro" && <Intro w={step.w} onNext={next} />}
-        {step?.k === "choice" && <Choice step={step} pool={pool} verdict={verdict} onAnswer={answer} />}
-        {step?.k === "listen" && <Listen w={step.w} pool={pool} verdict={verdict} onAnswer={answer} />}
-        {step?.k === "tiles" && <Tiles w={step.w} verdict={verdict} onAnswer={answer} />}
-        {step?.k === "type" && <TypeIn w={step.w} verdict={verdict} onAnswer={answer} />}
+        {step?.k === "choice" && <Choice step={step} pool={pool} verdict={verdict} onAnswer={onWord} />}
+        {step?.k === "listen" && <Listen w={step.w} pool={pool} verdict={verdict} onAnswer={onWord} />}
+        {step?.k === "tiles" && <Tiles w={step.w} verdict={verdict} onAnswer={onWord} />}
+        {step?.k === "type" && <TypeIn w={step.w} verdict={verdict} onAnswer={onWord} />}
+        {step?.k === "item" && <GItem it={step.it} verdict={verdict} onAnswer={(ok, shown) => answer(ok, { key: "item:" + step.i, answer: shown, example: step.it.explain }, false)} />}
         {step?.k === "match" && <Match ws={step.ws} onDone={(mistakes) => {
           setStats((s) => ({ correct: s.correct + (mistakes ? 0 : 1), total: s.total + 1 }));
           setXp((x) => x + (mistakes ? 5 : 15));
@@ -287,12 +314,8 @@ export default function Session({
           <div className="rs-vtext">
             <b>{verdict.ok ? (verdict.near ? "Deyarli! Bitta harf xato" : pick(PRAISE, pos)) : "To'g'ri javob:"}</b>
             {(!verdict.ok || verdict.near) && <span className="rs-ans">{verdict.answer}</span>}
-            {verdict.ok && !verdict.near && (
-              <span>
-                {verdict.w.ru} — {verdict.w.uz}
-              </span>
-            )}
-            {verdict.w.example && <small>{verdict.w.example}</small>}
+            {verdict.ok && !verdict.near && verdict.line && <span>{verdict.line}</span>}
+            {verdict.example && <small>{verdict.example}</small>}
             {bonus && <span className="rs-bonus">{bonus}</span>}
           </div>
           <button className="rs-btn" onClick={next} data-autofocus>
@@ -413,7 +436,7 @@ function Options({ options, correct, verdict, onPick, ru }: { options: string[];
   );
 }
 
-function Choice({ step, pool, verdict, onAnswer }: { step: Extract<Step, { k: "choice" }>; pool: RuWord[]; verdict: Verdict | null; onAnswer: (ok: boolean, w: RuWord, shown: string) => void }) {
+function Choice({ step, pool, verdict, onAnswer }: { step: Extract<Step, { k: "choice" }>; pool: RuWord[]; verdict: Verdict | null; onAnswer: OnWord }) {
   const { w, dir } = step;
   const field = dir === "ru2uz" ? "uz" : "ru";
   const correct = w[field];
@@ -436,7 +459,7 @@ function Choice({ step, pool, verdict, onAnswer }: { step: Extract<Step, { k: "c
   );
 }
 
-function Listen({ w, pool, verdict, onAnswer }: { w: RuWord; pool: RuWord[]; verdict: Verdict | null; onAnswer: (ok: boolean, w: RuWord, shown: string) => void }) {
+function Listen({ w, pool, verdict, onAnswer }: { w: RuWord; pool: RuWord[]; verdict: Verdict | null; onAnswer: OnWord }) {
   const options = useMemo(() => shuffle([w.uz, ...distractors(w, pool, "uz")]), [w, pool]);
   useEffect(() => {
     const t = setTimeout(() => speak(w.ru), 250);
@@ -462,7 +485,7 @@ function Listen({ w, pool, verdict, onAnswer }: { w: RuWord; pool: RuWord[]; ver
 
 const CYR = "абвгдежзиклмнопрстуфхцчшыэюя";
 
-function Tiles({ w, verdict, onAnswer }: { w: RuWord; verdict: Verdict | null; onAnswer: (ok: boolean, w: RuWord, shown: string) => void }) {
+function Tiles({ w, verdict, onAnswer }: { w: RuWord; verdict: Verdict | null; onAnswer: OnWord }) {
   const target = ruMain(w);
   const tiles = useMemo(() => {
     const letters = [...target.toLowerCase()];
@@ -522,7 +545,7 @@ function Tiles({ w, verdict, onAnswer }: { w: RuWord; verdict: Verdict | null; o
 }
 const norm2 = (s: string) => s.toLowerCase().replace(/ё/g, "е").normalize("NFD").replace(/[̀-ͯ]/g, "");
 
-function TypeIn({ w, verdict, onAnswer }: { w: RuWord; verdict: Verdict | null; onAnswer: (ok: boolean, w: RuWord, shown: string, near?: boolean) => void }) {
+function TypeIn({ w, verdict, onAnswer }: { w: RuWord; verdict: Verdict | null; onAnswer: OnWord }) {
   const [v, setV] = useState("");
   const ref = useRef<HTMLInputElement>(null);
   useEffect(() => {
@@ -618,6 +641,95 @@ function Match({ ws, onDone }: { ws: RuWord[]; onDone: (mistakes: number) => voi
   );
 }
 
+/* ============================== Grammatika mashqi ============================== */
+
+const isCyr = (s: string) => /[а-яё]/i.test(s);
+const KB = ["йцукенгшщзх", "фывапролджэ", "ячсмитьбюъё"];
+
+/** Ekrandagi rus klaviaturasi — telefonda rus tili o'rnatilmagan bo'lsa ham yozish mumkin */
+function RuKeyboard({ onKey }: { onKey: (k: string) => void }) {
+  return (
+    <div className="rs-kb" aria-label="Rus klaviaturasi">
+      {KB.map((row) => (
+        <div key={row}>
+          {[...row].map((c) => (
+            <button key={c} type="button" onClick={() => onKey(c)}>
+              {c}
+            </button>
+          ))}
+        </div>
+      ))}
+      <div>
+        <button type="button" className="wide" onClick={() => onKey(" ")}>
+          probel
+        </button>
+        <button type="button" className="wide" onClick={() => onKey("⌫")} aria-label="O'chirish">
+          ⌫
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function GItem({ it, verdict, onAnswer }: { it: RuItem; verdict: Verdict | null; onAnswer: (ok: boolean, shown: string) => void }) {
+  const [v, setV] = useState("");
+  const ref = useRef<HTMLInputElement>(null);
+  if (it.type === "choice") {
+    const correct = it.options[it.answer];
+    return (
+      <>
+        <Prompt label="📘 To'g'ri variantni tanlang">
+          <div className="rs-card">
+            <div className="rs-q">{it.q}</div>
+          </div>
+        </Prompt>
+        <Options options={it.options} correct={correct} verdict={verdict} ru={isCyr(correct)} onPick={(o) => onAnswer(o === correct, correct)} />
+      </>
+    );
+  }
+  const cyr = isCyr(it.answer);
+  const submit = (e?: React.FormEvent) => {
+    e?.preventDefault();
+    if (verdict || !v.trim()) return;
+    onAnswer(isCorrect(v, it.answer, it.accept), it.answer);
+  };
+  return (
+    <form onSubmit={submit} style={{ display: "contents" }}>
+      <Prompt label={it.type === "fill" ? "✍️ Bo'sh joyni to'ldiring" : "🔁 Tarjima qiling"}>
+        <div className="rs-card">
+          <div className="rs-q">{it.q}</div>
+          {it.type === "fill" && it.hint && <span className="rs-gender">💡 {it.hint}</span>}
+        </div>
+        <input
+          ref={ref}
+          className={"rs-input" + (verdict ? (verdict.ok ? " ok" : " bad") : "")}
+          value={v}
+          onChange={(e) => setV(e.target.value)}
+          placeholder={cyr ? "Ruscha yozing…" : "Javobingiz…"}
+          autoComplete="off"
+          autoCapitalize="off"
+          spellCheck={false}
+          lang={cyr ? "ru" : undefined}
+          inputMode={cyr ? "none" : undefined}
+          disabled={!!verdict}
+          aria-label="Javob"
+        />
+      </Prompt>
+      {cyr && !verdict && <RuKeyboard onKey={(k) => setV((x) => (k === "⌫" ? x.slice(0, -1) : x + k))} />}
+      {!verdict && (
+        <div className="rs-foot">
+          <button type="button" className="rs-link" onClick={() => onAnswer(false, it.answer)}>
+            Bilmayman
+          </button>
+          <button className="rs-btn" disabled={!v.trim()}>
+            Tekshirish
+          </button>
+        </div>
+      )}
+    </form>
+  );
+}
+
 /* ============================== Natija ============================== */
 
 function Finish({ r, title, kind, goal, xpBefore, onClose }: { r: SessionResult; title: string; kind: SessionKind; goal: number; xpBefore: number; onClose: () => void }) {
@@ -639,7 +751,7 @@ function Finish({ r, title, kind, goal, xpBefore, onClose }: { r: SessionResult;
         ))}
       </div>
       <div className="rs-fin">
-        <div className="rs-trophy">{kind === "learn" ? "🎓" : kind === "review" ? "🧠" : "⚡"}</div>
+        <div className="rs-trophy">{kind === "learn" ? "🎓" : kind === "review" ? "🧠" : kind === "grammar" ? "📘" : "⚡"}</div>
         <h2>{head}</h2>
         <p>
           {title}
