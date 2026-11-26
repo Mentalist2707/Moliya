@@ -6,7 +6,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { pushBack } from "@/lib/back";
-import { almost, GENDER_LABEL, isCorrect, isUzCorrect, shuffle, variants, type RuItem, type RuWord } from "@/lib/ru";
+import { almost, GENDER_LABEL, isCorrect, isUzCorrect, normUz, shuffle, uzAnswers, variants, type RuItem, type RuWord } from "@/lib/ru";
 import { autoplay, canSpeak, post, speak } from "./ruCtx";
 import { useStore } from "./ui";
 
@@ -76,7 +76,10 @@ const tileable = (w: RuWord) => {
 /** Chalg'ituvchi variantlar: avval shu bo'limdan, o'xshash uzunlikdagi */
 function distractors(w: RuWord, pool: RuWord[], field: "ru" | "uz", n = 3): string[] {
   const own = w[field].toLowerCase();
-  const cand = shuffle(pool.filter((x) => x.id !== w.id && x[field].toLowerCase() !== own));
+  // Ma'nosi bir xil so'zlar (мама / мать — ona) variant bo'lmasin: aks holda ikkita to'g'ri javob chiqadi
+  const mine = new Set(uzAnswers(w.uz).map(normUz));
+  const same = (x: RuWord) => uzAnswers(x.uz).some((a) => mine.has(normUz(a)));
+  const cand = shuffle(pool.filter((x) => x.id !== w.id && x[field].toLowerCase() !== own && !same(x)));
   const near = cand.filter((x) => x.lesson_id === w.lesson_id);
   const out: string[] = [];
   for (const x of [...near, ...cand]) {
@@ -600,19 +603,23 @@ function Match({ ws, onDone }: { ws: RuWord[]; onDone: (mistakes: number) => voi
   const left = useMemo(() => shuffle(ws.map((w) => ({ id: w.id, t: w.ru }))), [ws]);
   const right = useMemo(() => shuffle(ws.map((w) => ({ id: w.id, t: w.uz }))), [ws]);
   const [sel, setSel] = useState<{ side: "l" | "r"; id: number } | null>(null);
-  const [gone, setGone] = useState<number[]>([]);
+  const [gone, setGone] = useState<{ l: number[]; r: number[] }>({ l: [], r: [] });
   const [bad, setBad] = useState<string | null>(null);
   const [mist, setMist] = useState(0);
+  // Tarjimasi bir xil so'zlar (мама / мать — ona) istalgan "ona" bilan juftlanadi
+  const uzOf = (id: number) => normUz(ws.find((w) => w.id === id)!.uz);
   const tap = (side: "l" | "r", id: number) => {
-    if (gone.includes(id)) return;
+    if (gone[side].includes(id)) return;
     if (side === "l") speak(ws.find((w) => w.id === id)!.ru, 1);
     if (!sel || sel.side === side) return setSel({ side, id });
-    if (sel.id === id) {
-      const g = [...gone, id];
+    const l = side === "l" ? id : sel.id;
+    const r = side === "r" ? id : sel.id;
+    if (uzOf(l) === uzOf(r)) {
+      const g = { l: [...gone.l, l], r: [...gone.r, r] };
       setGone(g);
       setSel(null);
       beep("ok");
-      if (g.length === ws.length) setTimeout(() => onDone(mist), 450);
+      if (g.l.length === ws.length) setTimeout(() => onDone(mist), 450);
     } else {
       setBad(side + id);
       setMist((m) => m + 1);
@@ -624,9 +631,9 @@ function Match({ ws, onDone }: { ws: RuWord[]; onDone: (mistakes: number) => voi
   const btn = (side: "l" | "r", x: { id: number; t: string }) => (
     <button
       key={side + x.id}
-      className={"rs-m" + (side === "l" ? " ru" : "") + (gone.includes(x.id) ? " gone" : "") + (sel?.side === side && sel.id === x.id ? " sel" : "") + (bad === side + x.id ? " bad" : "")}
+      className={"rs-m" + (side === "l" ? " ru" : "") + (gone[side].includes(x.id) ? " gone" : "") + (sel?.side === side && sel.id === x.id ? " sel" : "") + (bad === side + x.id ? " bad" : "")}
       onClick={() => tap(side, x.id)}
-      disabled={gone.includes(x.id)}
+      disabled={gone[side].includes(x.id)}
     >
       {x.t}
     </button>
