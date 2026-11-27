@@ -9,17 +9,17 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { todayStr } from "@/lib/format";
 import {
-  buildUnits, GENDER_LABEL, isDueReview, ruStreak, shuffle, STATE_LABEL, wordState, xpLevel,
+  buildUnits, GENDER_LABEL, SKILL, isDueReview, ruStreak, shuffle, STATE_LABEL, wordState, xpLevel,
   type RuData, type RuGrammar, type RuItem, type RuSet, type RuUnit, type RuWord, type WordState,
 } from "@/lib/ru";
 import { api, Chips, Confirm, Empty, Field, Foot, Seg, Sheet, useStore, useSubmit } from "./ui";
 import { I } from "./icons";
 import type { Me } from "./Settings";
 import { autoplay, canSpeak, post, setAutoplay, speak } from "./ruCtx";
-import Session, { setSfx, sfxOn, type SessionKind } from "./RuSession";
+import Session, { setSfx, sfxOn, type Passage, type SessionKind } from "./RuSession";
 
 type Sub = "learn" | "dict" | "stats";
-type Run = { kind: SessionKind; title: string; words: RuWord[]; items?: RuItem[]; setId?: number };
+type Run = { kind: SessionKind; title: string; words: RuWord[]; items?: RuItem[]; setId?: number; passage?: Passage };
 
 const GTAG: Record<string, string> = { m: "м", f: "ж", n: "ср", pl: "мн" };
 const dayAdd = (d: string, n: number) => new Date(Date.parse(d + "T00:00:00Z") + n * 86400000).toISOString().slice(0, 10);
@@ -61,7 +61,8 @@ export default function Russian({ me, setMe }: { me: Me | null; setMe: (m: Me) =
   };
   const startSet = (set: RuSet) => {
     if (!set.items.length) return toast("Bu mashqda savol yo'q");
-    setRun({ kind: "grammar", title: set.title, words: [], items: set.items, setId: set.id });
+    const passage = set.passage ? { kind: set.kind ?? "reading", text: set.passage, uz: set.passage_uz, gloss: set.gloss } : undefined;
+    setRun({ kind: "grammar", title: set.title, words: [], items: set.items, setId: set.id, passage });
   };
 
   return (
@@ -217,7 +218,10 @@ function Learn({
       {units.map((u, ui) => {
         const lesson = r.lessons.find((l) => l.id === u.id);
         const grammar = lesson?.grammar ?? [];
-        const sets = r.sets.filter((x) => x.lesson_id != null && x.lesson_id === u.id).sort((a, b) => a.id - b.id);
+        const ORDER = ["grammar", "reading", "listening", "writing"];
+        const sets = r.sets
+          .filter((x) => x.lesson_id != null && x.lesson_id === u.id)
+          .sort((a, b) => ORDER.indexOf(a.kind ?? "grammar") - ORDER.indexOf(b.kind ?? "grammar") || a.id - b.id);
         const allDone = u.learned === u.words.length && sets.every((x) => x.done_at);
         return (
         <section key={u.id ?? "x"} className="ru-unit" style={{ "--u": `var(${UNIT_COLORS[ui % UNIT_COLORS.length]})` } as React.CSSProperties}>
@@ -240,8 +244,8 @@ function Learn({
                 </button>
               )}
               {sets.map((x, si) => (
-                <button key={x.id} className={x.done_at ? "done" : ""} onClick={() => startSet(x)}>
-                  <b>{x.done_at ? "✅" : "📘"}</b>
+                <button key={x.id} className={(x.done_at ? "done " : "") + (x.kind ?? "grammar")} onClick={() => startSet(x)}>
+                  <b>{x.done_at ? "✅" : SKILL[x.kind ?? "grammar"].icon}</b>
                   <span>{x.title || `${si + 1}-mashq`}</span>
                   <small>{x.done_at && x.total ? `${x.score}/${x.total} · qayta ishlash` : `${x.items.length} ta savol`}</small>
                 </button>

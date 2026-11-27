@@ -31,8 +31,34 @@ export type RuLesson = {
 export type RuItem =
   | { type: "choice"; q: string; options: string[]; answer: number; explain?: string }
   | { type: "fill"; q: string; answer: string; accept?: string[]; hint?: string; explain?: string }
-  | { type: "translate"; q: string; answer: string; accept?: string[]; explain?: string };
-export type RuSet = { id: number; lesson_id: number | null; title: string; items: RuItem[]; score: number | null; total: number | null; done_at: string | null; created_at: string };
+  | { type: "translate"; q: string; answer: string; accept?: string[]; explain?: string }
+  /** So'zlardan gap tuzish: words — to'g'ri tartibda */
+  | { type: "order"; q: string; words: string[]; explain?: string }
+  /** Diktant: say — o'qib beriladi, answer — yozilishi kerak */
+  | { type: "dictation"; say: string; answer: string; accept?: string[]; explain?: string }
+  /** Erkin yozish: must — har biri "a|b|c" (birortasi bo'lsa yetarli), sample — namuna */
+  | { type: "free"; q: string; hint?: string; must?: string[]; sample: string; explain?: string };
+export type RuSkill = "grammar" | "reading" | "listening" | "writing";
+export type RuSet = {
+  id: number;
+  lesson_id: number | null;
+  title: string;
+  items: RuItem[];
+  score: number | null;
+  total: number | null;
+  done_at: string | null;
+  created_at: string;
+  kind?: RuSkill;
+  passage?: string | null;
+  passage_uz?: string | null;
+  gloss?: Record<string, string> | null;
+};
+export const SKILL: Record<RuSkill, { icon: string; label: string }> = {
+  grammar: { icon: "📘", label: "Grammatika" },
+  reading: { icon: "📖", label: "O'qish" },
+  listening: { icon: "🎧", label: "Tinglash" },
+  writing: { icon: "✍️", label: "Yozish" },
+};
 export type RuLogDay = { date: string; reviews: number; correct: number; xp?: number };
 export type RuData = { words: RuWord[]; lessons: RuLesson[]; sets: RuSet[]; log: RuLogDay[]; ai: boolean; ai_left: number };
 

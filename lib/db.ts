@@ -427,6 +427,14 @@ const MIGRATE_V9 = `
   ALTER TABLE users ADD COLUMN IF NOT EXISTS ru_daily_xp SMALLINT NOT NULL DEFAULT 50;
 `;
 
+// Rus tili: ko'nikmalar (o'qish, tinglash, yozish) — mashq to'plamiga matn va tur
+const MIGRATE_V10 = `
+  ALTER TABLE ru_sets ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'grammar';
+  ALTER TABLE ru_sets ADD COLUMN IF NOT EXISTS passage TEXT;
+  ALTER TABLE ru_sets ADD COLUMN IF NOT EXISTS passage_uz TEXT;
+  ALTER TABLE ru_sets ADD COLUMN IF NOT EXISTS gloss JSONB;
+`;
+
 async function migrate(p: Pool) {
   await p.query(SCHEMA);
   await p.query(MIGRATE);
@@ -437,6 +445,7 @@ async function migrate(p: Pool) {
   await p.query(MIGRATE_V7);
   await p.query(MIGRATE_V8);
   await p.query(MIGRATE_V9);
+  await p.query(MIGRATE_V10);
   // Avvalgi (bir kishilik) versiyadagi ma'lumotlarni egasiga biriktirish
   const owner = Number(process.env.TELEGRAM_OWNER_ID || 0);
   if (owner) {
